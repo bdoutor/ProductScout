@@ -47,9 +47,26 @@ desktop.ini
 *.temp
 backend/_start_backend.bat
 frontend/_start_frontend.bat
+nul
+response.json
+test-result.json
 
 # Cache
 .cache/
 .npm/
 .eslintcache
 *.tsbuildinfo
+
+# .NET legacy files (não usados no projeto Node.js)
+*.csproj
+*.csproj.user
+*.sln
+appsettings.json
+appsettings.*.json
+Properties/
+Pages/
+Program.cs
+wwwroot/
+
+# Package lock files (opcional - manter apenas um)
+package-lock.json

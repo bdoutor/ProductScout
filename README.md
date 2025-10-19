@@ -1,6 +1,11 @@
-# Product Scout
+# ProductScout
 
-**Product Scout** is a universal product lookup & comparison tool that searches multiple Portuguese retailers simultaneously and displays a unified, sortable results table with pricing, availability, delivery info, and direct product links.
+> **Version 1.0 - Proof of Concept**
+> Universal product lookup & comparison tool for Portuguese retailers
+
+**ProductScout** searches multiple Portuguese retailers simultaneously and displays a unified, sortable results table with pricing, availability, delivery info, and direct product links.
+
+**Note:** This is v1.0 POC - supports public websites only. For authenticated/session-based searches, see v2.0.
 
 ## Features
 
@@ -73,7 +78,7 @@ Isto irá:
 
 Para parar tudo: **Duplo-clique em:** `stop-all.bat`
 
-📖 **Ver guia completo:** [COMO-USAR.md](COMO-USAR.md)
+📖 **Ver guia completo:** [docs/COMO-USAR.md](docs/COMO-USAR.md)
 
 ### Method 2: Using Legacy Startup Script
 
@@ -349,14 +354,30 @@ This ensures polite crawling and reduces blocking risk.
 - Add Firecrawl API key to backend `.env`
 - Consider using proxies (not implemented in MVP)
 
-## Future Enhancements
+## Documentation
 
-- **Authentication**: User accounts, saved searches
+Complete documentation is available in the [docs/](docs/) folder:
+- [Getting Started Guide](docs/COMO-USAR.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Firecrawl Setup](docs/FIRECRAWL_SETUP.md)
+- [Testing Results](docs/TESTING_RESULTS.md)
+- [Full Documentation Index](docs/README.md)
+
+## Version Roadmap
+
+### v1.0 (Current - POC)
+- Multi-store search for public websites
+- Configurable CSS selectors
+- HTTP fetch + optional Firecrawl rendering
+- Basic caching and rate limiting
+
+### v2.0 (Planned)
+- **Authentication support**: Login/session-based searches
+- **User accounts**: Saved searches, favorites
 - **Advanced filtering**: Price range, brand, rating
 - **Price history**: Track changes over time
 - **Alerts**: Notify when price drops
-- **Form-based supplier config**: Admin UI instead of SQL
-- **Retest action**: Force refresh per supplier
+- **Admin UI**: Supplier management interface
 
 ## Tech Stack
 

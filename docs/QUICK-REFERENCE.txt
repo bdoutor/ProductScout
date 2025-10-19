@@ -1,0 +1,200 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    PRODUCTSCOUT - QUICK REFERENCE CARD                     ║
+║                          Backend Management v2.0                           ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 🚀 QUICK START (First Time)                                                │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  1. Open CMD (not Git Bash) in ProductScout folder
+  2. Run: safe-start-backend.bat
+  3. Wait for "Backend is listening on port 3001"
+  4. Test: curl http://localhost:3001/health
+  5. Done! Backend is running ✅
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 📜 SCRIPTS CHEAT SHEET                                                      │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  SCRIPT                      WHEN TO USE                    TIME
+  ────────────────────────────────────────────────────────────────────────
+  safe-start-backend.bat      ⭐ First time, after crash    ~10s
+  restart-backend.bat         Daily quick restarts           ~5s
+  emergency-stop.bat          🚨 Backend stuck/looping       ~5s
+  quick-check.bat             Check if running               ~3s
+  diagnose-backend.bat        Full diagnostic                ~15s
+  capture-state.bat           Debug snapshots                ~5s
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 🔥 EMERGENCY PROCEDURES                                                     │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  PROBLEM              SOLUTION
+  ───────────────────────────────────────────────────────────────────────
+  Exit Code 2          → emergency-stop.bat → safe-start-backend.bat
+  VS Code Crashed      → Close VS Code → emergency-stop.bat → Reopen
+  Backend Looping      → emergency-stop.bat → safe-start-backend.bat
+  Port Won't Free      → emergency-stop.bat (check output)
+  Don't Know What      → diagnose-backend.bat → TROUBLESHOOTING.md
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 📖 DOCUMENTATION MAP                                                        │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  FILE                         PURPOSE
+  ────────────────────────────────────────────────────────────────────────
+  INDEX.md                     📚 Complete navigation guide
+  README-SCRIPTS.md            🚀 How to use scripts
+  TROUBLESHOOTING.md           🔧 Fix problems
+  DEBUG-NOTES.md               🔍 Technical context
+  POST-TEST-CHECKLIST.md       ✅ Test documentation
+  CURRENT-STATE.txt            📊 Current system status
+  QUICK-REFERENCE.txt          ⚡ This file
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ ✅ SUCCESS INDICATORS                                                       │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  In backend window, you should see:
+
+    🚀 Product Scout API running on http://localhost:3001
+    📊 Health check: http://localhost:3001/health
+
+  Test with:
+
+    curl http://localhost:3001/health
+    → {"status":"ok","timestamp":"..."}
+
+  quick-check.bat shows:
+
+    [STATUS] Backend is RUNNING on port 3001
+    [OK] Health endpoint is responding!
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ ❌ FAILURE INDICATORS                                                       │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  ERROR                              ACTION
+  ────────────────────────────────────────────────────────────────────────
+  Exit code 2                        → TROUBLESHOOTING.md > Problem 1
+  Port 3001 in use                   → emergency-stop.bat
+  npm not found                      → Install Node.js
+  Backend window closes instantly    → Window will stay open now!
+  VS Code crashes                    → TROUBLESHOOTING.md > Problem 4
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 🔍 DIAGNOSTIC COMMANDS                                                      │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  # Check if port 3001 is in use
+  netstat -ano | findstr ":3001"
+
+  # List node.exe processes
+  tasklist | findstr "node.exe"
+
+  # Test backend manually
+  curl http://localhost:3001/health
+
+  # Check npm/node versions
+  npm --version
+  node --version
+
+  # View latest log
+  type logs\backend-start-*.log
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 🎯 DAILY WORKFLOW                                                           │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  MORNING:
+    1. quick-check.bat (verify nothing running)
+    2. safe-start-backend.bat
+    3. Start developing
+
+  DURING DAY:
+    - ts-node-dev auto-reloads on file changes
+    - NO manual restart needed (usually)
+    - Only restart if: changed .env, installed packages, or crashed
+
+  EVENING:
+    1. emergency-stop.bat
+    2. Close VS Code
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ ⚠️ IMPORTANT RULES                                                          │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  DO:
+  ✅ Read error messages before closing windows
+  ✅ Use emergency-stop.bat instead of Task Manager
+  ✅ Run scripts from CMD (not Git Bash)
+  ✅ Keep logs/ folder for debugging
+  ✅ Take screenshots of errors
+
+  DON'T:
+  ❌ Kill node.exe manually from Task Manager
+  ❌ Close error windows without reading
+  ❌ Delete logs/ folder
+  ❌ Run multiple scripts at the same time
+  ❌ Ignore warning messages
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 🔗 QUICK LINKS BY SITUATION                                                 │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  "I'm new here"
+    → README-SCRIPTS.md > Quick Start
+
+  "Something broke"
+    → TROUBLESHOOTING.md
+
+  "Exit code 2 again!"
+    → TROUBLESHOOTING.md > Problem 1: Exit Code 2
+    → DEBUG-NOTES.md > Root Causes
+
+  "Which script do I use?"
+    → This file > SCRIPTS CHEAT SHEET
+    → README-SCRIPTS.md > All Available Scripts
+
+  "I want to understand everything"
+    → INDEX.md (start here)
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 📊 SYSTEM STATUS (Last Check)                                              │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  Date: 2025-10-19
+  Port 3001: FREE ✅
+  node.exe processes: 1 (Claude Code - not backend) ✅
+  npm/node: INSTALLED ✅
+  Backend structure: OK ✅
+
+  Status: READY FOR TESTING ⏳
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 🎬 NEXT ACTION                                                              │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  Execute: safe-start-backend.bat
+
+  If SUCCESS → You're done! Backend is running 🎉
+  If FAILURE → Window will show error, consult TROUBLESHOOTING.md
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 💾 LOG FILES                                                                │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  logs/backend-start-*.log          (startup logs)
+  logs/backend-diagnostics-*.log    (diagnostic reports)
+  logs/system-state-*.log           (system snapshots)
+
+  Keep these files! They help with debugging.
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║  For complete documentation, start with INDEX.md                           ║
+║  For immediate help: TROUBLESHOOTING.md                                    ║
+║  Current system state: CURRENT-STATE.txt                                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+Last Updated: 2025-10-19 | Version: 2.0 Anti-Loop/Crash Edition

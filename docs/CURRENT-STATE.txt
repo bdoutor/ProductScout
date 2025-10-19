@@ -1,0 +1,207 @@
+================================================================================
+PRODUCTSCOUT BACKEND - ESTADO ATUAL
+================================================================================
+Última Atualização: 2025-10-19
+Sessão: Anti-Loop/Crash Implementation - Claude Code
+================================================================================
+
+RESUMO EXECUTIVO:
+-----------------
+✅ Scripts robustos criados e prontos para teste
+⚠️ Backend NÃO está em execução (porta 3001 livre)
+✅ Ambiente validado (npm, node, estrutura de ficheiros OK)
+⏳ AGUARDANDO TESTE INICIAL de safe-start-backend.bat
+
+================================================================================
+ESTADO DO SISTEMA (Última Verificação):
+================================================================================
+
+Data/Hora Check: 2025-10-19 ~10:00-11:00
+Porta 3001: LIVRE ✅
+Processos node.exe: 1 (PID 33568 - Claude Code, NÃO é backend) ✅
+npm: INSTALADO ✅
+node: INSTALADO ✅
+backend/package.json: EXISTE ✅
+backend/node_modules: EXISTE ✅
+backend/src/index.ts: EXISTE ✅
+
+================================================================================
+PROBLEMA ORIGINAL:
+================================================================================
+
+Sintoma: Backend crasha com exit code 2 ao executar restart-backend.bat
+         VS Code também crasha
+         Loop constante, impossível avançar
+
+Root Cause:
+1. Script matava TODOS os node.exe (incluindo Claude Code)
+2. Loop FOR com bug (variáveis não expandidas corretamente)
+3. Janela fechava sem mostrar erro (cmd /c)
+4. Sem validações prévias de npm/package.json
+
+================================================================================
+SOLUÇÃO IMPLEMENTADA:
+================================================================================
+
+✅ 6 SCRIPTS CRIADOS:
+   1. safe-start-backend.bat       ⭐ RECOMENDADO - Ultra-robusto
+   2. restart-backend.bat           (melhorado)
+   3. emergency-stop.bat            Para emergências
+   4. quick-check.bat               Verificação rápida
+   5. diagnose-backend.bat          (já existia)
+   6. capture-state.bat             Snapshot de sistema
+
+✅ 5 DOCUMENTOS CRIADOS:
+   1. INDEX.md                      Índice completo
+   2. README-SCRIPTS.md             Guia de uso rápido
+   3. TROUBLESHOOTING.md            Resolução de problemas
+   4. DEBUG-NOTES.md                Notas técnicas
+   5. POST-TEST-CHECKLIST.md        Template de teste
+
+✅ CORREÇÕES CRÍTICAS:
+   - Só mata processos na porta 3001 (NÃO todos os node.exe)
+   - enabledelayedexpansion + !VAR! correto
+   - Janela fica aberta em caso de erro (cmd /k)
+   - Validação completa antes de executar
+   - Logging detalhado em logs/
+   - Health check automático
+
+================================================================================
+PRÓXIMO PASSO CRÍTICO:
+================================================================================
+
+EXECUTAR: safe-start-backend.bat
+
+EXPECTATIVA:
+- ✅ Backend deve iniciar sem crash
+- ✅ Janela fica aberta mostrando "🚀 Product Scout API running on http://localhost:3001"
+- ✅ quick-check.bat mostra backend running
+- ✅ http://localhost:3001/health responde
+
+SE FALHAR:
+- Janela NÃO vai fechar (vai mostrar erro)
+- Log será gerado em logs/backend-start-*.log
+- Consultar TROUBLESHOOTING.md
+- Preencher POST-TEST-CHECKLIST.md
+
+================================================================================
+FICHEIROS IMPORTANTES:
+================================================================================
+
+📖 COMEÇAR AQUI:
+   → INDEX.md                   (visão geral completa)
+   → README-SCRIPTS.md          (como usar os scripts)
+
+🚨 SE DER ERRO:
+   → TROUBLESHOOTING.md         (problemas comuns + soluções)
+   → DEBUG-NOTES.md             (contexto técnico)
+
+📝 APÓS TESTE:
+   → Copiar POST-TEST-CHECKLIST.md
+   → Renomear para test-result-YYYYMMDD.md
+   → Preencher com resultados
+
+📊 LOGS (gerados automaticamente):
+   → logs/backend-start-*.log
+   → logs/backend-diagnostics-*.log
+   → logs/system-state-*.log
+
+================================================================================
+COMANDOS RÁPIDOS:
+================================================================================
+
+# Iniciar backend (primeira vez ou após crash)
+safe-start-backend.bat
+
+# Verificar se está a correr
+quick-check.bat
+
+# Parar backend
+emergency-stop.bat
+
+# Ver estado completo
+diagnose-backend.bat
+
+# Capturar snapshot
+capture-state.bat
+
+# Testar manualmente
+curl http://localhost:3001/health
+
+================================================================================
+INFORMAÇÃO TÉCNICA:
+================================================================================
+
+Path do Projeto:
+C:\Users\bruno.doutor\OneDrive - MedicineOne\Ambiente de Trabalho\DOC\DOC\AI Coding\ProductScout
+
+Porta Backend: 3001
+Script principal: backend/src/index.ts
+Comando dev: ts-node-dev --respawn --transpile-only src/index.ts
+
+Processos a NÃO matar:
+- PID 33568 (Claude Code)
+- Qualquer processo node.exe que NÃO esteja em LISTENING na porta 3001
+
+Logs directory: logs/
+Sempre manter para histórico e debugging
+
+================================================================================
+NOTAS IMPORTANTES:
+================================================================================
+
+⚠️ NUNCA matar node.exe manualmente do Task Manager
+   → Usar emergency-stop.bat
+
+⚠️ NUNCA fechar janela de erro sem ler
+   → Fazer screenshot primeiro
+
+⚠️ SEMPRE usar safe-start após:
+   - npm install
+   - git pull
+   - mudanças em .env
+   - VS Code crash
+
+✅ Executar scripts a partir de CMD, não Git Bash
+   (Git Bash pode causar problemas com comandos Windows)
+
+✅ Manter pasta logs/ para debug futuro
+
+✅ Preencher POST-TEST-CHECKLIST.md após cada teste importante
+
+================================================================================
+CONTACTOS/RECURSOS:
+================================================================================
+
+Documentação Node.js: https://nodejs.org
+ts-node-dev: https://github.com/wclr/ts-node-dev
+Windows Batch: https://ss64.com/nt/
+
+Todos os ficheiros de documentação estão na raiz do projeto.
+Começar sempre por INDEX.md para navegação.
+
+================================================================================
+HISTÓRICO:
+================================================================================
+
+2025-10-19 ~10:00 - Análise inicial do problema
+2025-10-19 ~10:30 - Criação de scripts robustos
+2025-10-19 ~11:00 - Documentação completa
+2025-10-19 ~11:30 - Sistema pronto para teste
+
+Próxima atualização: Após teste de safe-start-backend.bat
+
+================================================================================
+STATUS: READY FOR TESTING ✅
+================================================================================
+
+Tudo está preparado. Execute safe-start-backend.bat e observe o resultado.
+
+Se funcionar → Sucesso! 🎉
+Se falhar → A janela vai mostrar exatamente o que falhou.
+
+Boa sorte!
+
+================================================================================
+EOF
+================================================================================

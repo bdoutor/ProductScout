@@ -65,7 +65,7 @@ export default function Home() {
                 id="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="e.g., 'arroz carolino 1kg' or 'SSD NVMe 1TB'"
+                placeholder="e.g., 'brake pads' or 'oil filter 1234567'"
                 className="input flex-1"
                 disabled={loading}
               />
@@ -189,9 +189,9 @@ export default function Home() {
       {/* Header */}
       <header className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <h1 className="text-2xl font-bold text-gray-900">Product Scout</h1>
+          <h1 className="text-2xl font-bold text-gray-900">ProductScout</h1>
           <p className="text-sm text-gray-600 mt-1">
-            Universal product lookup & comparison tool
+            Universal automotive parts lookup & comparison
           </p>
         </div>
       </header>

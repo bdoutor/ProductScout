@@ -1,21 +1,23 @@
 # ProductScout
 
-> **Version 1.0 - Proof of Concept**
-> Universal product lookup & comparison tool for Portuguese retailers
+> **Universal Automotive Parts Lookup & Comparison**
+> Multi-supplier search with authentication support
 
-**ProductScout** searches multiple Portuguese retailers simultaneously and displays a unified, sortable results table with pricing, availability, delivery info, and direct product links.
+**ProductScout** is a comprehensive automotive parts search platform that queries multiple Portuguese suppliers simultaneously, supporting both public websites and authenticated supplier portals. Results are unified, normalized, and sortable with pricing, availability, delivery info, and direct product links.
 
-**Note:** This is v1.0 POC - supports public websites only. For authenticated/session-based searches, see v2.0.
+**This is the production edition** - supports authenticated supplier access, session management, and advanced automotive parts catalogs.
 
 ## Features
 
-- **Multi-store Search**: Query multiple retailers in parallel (FNAC, Rádio Popular, Continente, Lidl, etc.)
+- **Multi-supplier Search**: Query multiple automotive parts suppliers in parallel
 - **Universal Results**: Aggregated, normalized, and sorted product listings
 - **Smart Sorting**: Available items first (by price), unavailable items last
 - **Error Handling**: Per-store error isolation with detailed diagnostics
 - **Observability**: Full search run tracking with debug snapshots
-- **Configurable**: Add new stores via database configuration (no code changes)
+- **Authentication Support**: Login to supplier portals with session management
+- **Configurable**: Add new suppliers via database configuration (no code changes)
 - **Two Fetch Modes**: HTTP fetch for static pages, render/crawl for JavaScript-heavy sites
+- **Automotive Focus**: Optimized for parts catalogs with reference numbers and compatibility
 
 ## Architecture
 

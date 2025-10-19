@@ -1,7 +1,7 @@
 {
-  "name": "product-scout-frontend",
-  "version": "1.0.0",
-  "description": "Product Scout web interface",
+  "name": "productscout-frontend",
+  "version": "2.0.0",
+  "description": "ProductScout web interface - Automotive parts edition",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

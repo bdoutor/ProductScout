@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import '@/styles/globals.css';
 
 export const metadata: Metadata = {
-  title: 'Product Scout',
-  description: 'Universal product lookup & comparison tool',
+  title: 'ProductScout',
+  description: 'Universal automotive parts lookup & comparison (multi-supplier, with authentication)',
 };
 
 export default function RootLayout({

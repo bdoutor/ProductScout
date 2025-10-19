@@ -1,7 +1,7 @@
 {
-  "name": "product-scout-backend",
-  "version": "1.0.0",
-  "description": "Product Scout backend API service",
+  "name": "productscout-backend",
+  "version": "2.0.0",
+  "description": "ProductScout backend API service - Automotive parts edition",
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",

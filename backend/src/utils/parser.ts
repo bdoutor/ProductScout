@@ -2,24 +2,23 @@ import * as cheerio from 'cheerio';
 import { ProductItem, Supplier } from '../types';
 
 /**
- * Parse price string to number (handles EU format like "1.234,56")
+ * Parse price string to number (handles EU and US formats)
  */
 export function parsePrice(priceStr: string | undefined | null): number | null {
   if (!priceStr) return null;
 
-  // Remove currency symbols and whitespace
-  let cleaned = priceStr.replace(/[€$£\s]/g, '');
+  // Remove currency symbols and any non-numeric characters (keep digits, dots, commas, minus)
+  let cleaned = priceStr.replace(/[^0-9.,-]/g, '').trim();
 
-  // Handle EU format: 1.234,56 → 1234.56
-  // Check if comma is the last separator (likely decimal)
+  // Determine decimal separator by the last occurrence
   const lastComma = cleaned.lastIndexOf(',');
   const lastDot = cleaned.lastIndexOf('.');
 
   if (lastComma > lastDot) {
-    // EU format: replace dots, then comma to dot
+    // EU style: 1.234,56 -> 1234.56
     cleaned = cleaned.replace(/\./g, '').replace(',', '.');
   } else {
-    // US format or no decimal: just remove commas
+    // US style or no decimals: 1,234.56 -> 1234.56
     cleaned = cleaned.replace(/,/g, '');
   }
 
@@ -28,26 +27,37 @@ export function parsePrice(priceStr: string | undefined | null): number | null {
 }
 
 /**
- * Parse availability to number (e.g., "Em stock (3)" → 3, "Stock: 0" → 0)
+ * Parse availability to number (e.g., "Em stock (3)" -> 3, "Stock: 0" -> 0)
  */
 export function parseAvailability(availStr: string | undefined | null): number | null {
   if (!availStr) return null;
 
-  // Look for numbers in the string
+  // Look for explicit quantity
   const match = availStr.match(/\d+/);
-  if (match) {
-    return parseInt(match[0], 10);
-  }
+  if (match) return parseInt(match[0], 10);
 
-  // Check for common stock keywords
   const lowerStr = availStr.toLowerCase();
-  if (lowerStr.includes('em stock') || lowerStr.includes('disponível') ||
-      lowerStr.includes('available') || lowerStr.includes('in stock')) {
-    return 1; // Assume at least 1 in stock
+
+  // Positive signals (pt/en)
+  if (
+    lowerStr.includes('em stock') ||
+    lowerStr.includes('disponivel') ||
+    lowerStr.includes('disponível') ||
+    lowerStr.includes('available') ||
+    lowerStr.includes('in stock')
+  ) {
+    return 1;
   }
 
-  if (lowerStr.includes('esgotado') || lowerStr.includes('out of stock') ||
-      lowerStr.includes('indisponível')) {
+  // Negative signals (pt/en)
+  if (
+    lowerStr.includes('esgotado') ||
+    lowerStr.includes('sem stock') ||
+    lowerStr.includes('indisponivel') ||
+    lowerStr.includes('indisponível') ||
+    lowerStr.includes('out of stock') ||
+    lowerStr.includes('unavailable')
+  ) {
     return 0;
   }
 
@@ -79,23 +89,43 @@ export function extractAbsoluteUrl(href: string | undefined, baseUrl: string): s
 /**
  * Parse HTML using supplier selectors
  */
+function getSupplierSpecificSelectors(supplier: Supplier) {
+  // Seletores específicos para o Auger
+  if (supplier.name.toLowerCase().includes('auger')) {
+    return {
+      item: '.product-item, tr.product, .search-result-item',
+      name: '.product-name, td.description, .item-description',
+      code: '.product-code, td.reference, .item-reference',
+      price: '.product-price, td.price, .item-price',
+      availability: '.stock-status, td.availability, .stock-info',
+      delivery: '.delivery-info, td.delivery, .delivery-estimate',
+      link: 'a.product-link, td.description a, .item-link'
+    };
+  }
+  return supplier.selectors.result_selectors;
+}
+
 export function parseHtml(
   html: string,
   supplier: Supplier
 ): ProductItem[] {
   const $ = cheerio.load(html);
   const items: ProductItem[] = [];
-  const selectors = supplier.selectors.result_selectors;
+  const selectors = getSupplierSpecificSelectors(supplier);
 
   $(selectors.item).each((_, element) => {
     const $el = $(element);
 
-    const nameText = selectors.name ? $el.find(selectors.name).text().trim() : '';
+    const nameText = selectors.name
+      ? (selectors.name === 'self' ? $el.text().trim() : $el.find(selectors.name).text().trim())
+      : '';
     const codeText = selectors.code ? $el.find(selectors.code).text().trim() : null;
     const priceText = selectors.price ? $el.find(selectors.price).text().trim() : '';
     const availText = selectors.availability ? $el.find(selectors.availability).text().trim() : null;
     const deliveryText = selectors.delivery ? $el.find(selectors.delivery).text().trim() : null;
-    const linkHref = selectors.link ? $el.find(selectors.link).attr('href') : '';
+    const linkHref = selectors.link
+      ? (selectors.link === 'self' ? $el.attr('href') : $el.find(selectors.link).attr('href'))
+      : '';
 
     if (!nameText) return; // Skip items without a name
 
@@ -111,6 +141,24 @@ export function parseHtml(
 
     items.push(item);
   });
+  // Heuristic fallback for Auger: anchors linking to product-detail
+  if (items.length === 0 && supplier.name.toLowerCase().includes('auger')) {
+    $('a[href*="product-detail"]').each((_, el) => {
+      const $a = $(el);
+      const nameText = $a.text().trim();
+      if (!nameText) return;
+      const href = $a.attr('href');
+      items.push({
+        name: nameText,
+        code: null,
+        price: null,
+        availability: null,
+        delivery: null,
+        url: extractAbsoluteUrl(href, supplier.base_url),
+        store: supplier.name,
+      });
+    });
+  }
 
   return items;
 }

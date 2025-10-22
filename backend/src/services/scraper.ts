@@ -1,8 +1,10 @@
 import axios, { AxiosError } from 'axios';
 import { Supplier, ProductItem, SearchRun, ErrorType } from '../types';
-import { parseHtml, isBlockedByRobot } from '../utils/parser';
+import { parseHtml, isBlockedByRobot, parsePrice, parseAvailability, extractAbsoluteUrl } from '../utils/parser';
 import { supabase } from '../utils/supabase';
 import { looksLikeRobotBlock } from '../utils/fetch-helpers';
+import { decryptPassword } from '../utils/secrets';
+import { getBrowser } from '../providers/playwright';
 
 /**
  * Fetch page using HTTP mode
@@ -31,7 +33,7 @@ async function fetchHttp(url: string, timeout: number = 10000): Promise<{ html: 
 /**
  * Fetch page using render/crawl mode (Firecrawl or similar)
  */
-async function fetchRender(url: string, timeout: number = 15000, waitTime: number = 3500): Promise<{ html: string; status: number }> {
+async function fetchRender(url: string, timeout: number = 20000, waitTime: number = 2000): Promise<{ html: string; status: number }> {
   const apiKey = process.env.FIRECRAWL_API_KEY;
 
   if (!apiKey) {
@@ -148,6 +150,7 @@ export async function scrapeSupplier(
   let html = '';
   let httpStatus: number | null = null;
   let items: ProductItem[] = [];
+  let itemsPrefetched: ProductItem[] | null = null;
 
   try {
     // Step 1: Fetch page
@@ -187,10 +190,255 @@ export async function scrapeSupplier(
         }
       }
     } else {
-      // Use render mode directly
-      fetchResult = await fetchRender(searchUrl, fetchTimeout);
-      html = fetchResult.html;
-      httpStatus = fetchResult.status;
+      // Render mode: first try Playwright login flow for Auger when enabled
+      const pwEnabled = process.env.ENABLE_PLAYWRIGHT_LOGIN === '1' || process.env.ENABLE_PLAYWRIGHT_LOGIN === 'true';
+      if (pwEnabled && supplier.name.toLowerCase().includes('auger')) {
+        try {
+          // Login + search load
+          const { data: cred } = await supabase
+            .from('supplier_credentials')
+            .select('*')
+            .eq('name', supplier.name)
+            .eq('active', true)
+            .single();
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const browser = await getBrowser();
+          const context = await browser.newContext({ viewport: { width: 1366, height: 860 } });
+          const page = await context.newPage();
+          page.setDefaultTimeout(20000);
+          if (cred && cred.login && cred.password) {
+            const loginUrl: string = (supplier as any).login_url || cred.url || supplier.base_url;
+            await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
+            try { const c = await page.$('.modalOverlay .close, button.close'); if (c) await c.click({ force: true }); } catch {}
+            await page.fill('input[name="emailAddress"]', String(cred.login));
+            await page.fill('input[name="password"]', decryptPassword(String(cred.password)));
+            try { await page.click('.btn-login', { force: true }); } catch {}
+            await Promise.race([
+              page.waitForSelector('#Login', { state: 'detached' }),
+              page.waitForTimeout(8000),
+            ]);
+            // Try to toggle price visibility to "Mostrar"
+            try {
+              const priceCtl = await page.$('text=Preço');
+              if (priceCtl) {
+                await priceCtl.click({ force: true });
+                await page.waitForTimeout(200);
+                const showOpt = await page.$('text=Mostrar');
+                if (showOpt) { await showOpt.click({ force: true }); await page.waitForTimeout(400); }
+              } else {
+                const btnShow = await page.$('button:has-text("Mostrar")');
+                if (btnShow) { await btnShow.click({ force: true }); await page.waitForTimeout(400); }
+              }
+            } catch {}
+          }
+          await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+          try { await page.waitForSelector('a[href*="product-detail"]', { timeout: 20000 }); } catch {}
+          await page.waitForTimeout(800);
+          // Safety: try toggling price on search page too (some UIs need it per view)
+          try {
+            const priceCtl2 = await page.$('text=Preço');
+            if (priceCtl2) {
+              await priceCtl2.click({ force: true });
+              await page.waitForTimeout(200);
+              const showOpt2 = await page.$('text=Mostrar');
+              if (showOpt2) { await showOpt2.click({ force: true }); await page.waitForTimeout(400); }
+            }
+          } catch {}
+          try {
+            const raw = await page.evaluate(() => {
+              function nearest(el, selectors) {
+                const list = selectors.split(',');
+                let cur = el;
+                for (let depth = 0; depth < 6 && cur; depth++) {
+                  for (const s of list) {
+                    const hit = cur.closest(s.trim());
+                    if (hit) return hit;
+                  }
+                  cur = cur.parentElement;
+                }
+                return null;
+              }
+              function extractEuro(text) {
+                if (!text) return null;
+                // Common patterns: €3,50 | 3,50 € | EUR 3,50
+                const m = text.match(/[€\u20AC]\s*([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)|([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)\s*[€\u20AC]/);
+                if (!m) return null;
+                return (m[1] || m[2] || '').trim();
+              }
+              const anchors = Array.from(document.querySelectorAll('a[href*="product-detail"]'));
+              const out = [];
+              for (const a of anchors) {
+                const name = (a.textContent || '').trim();
+                const card = nearest(a, '.product-item, .product, .product-card, .card, .products-item');
+                let price = null, availability = null;
+                if (card) {
+                  // 1) Direct price nodes
+                  const priceEl = card.querySelector('.price, .product-price, [class*="price" i]');
+                  if (priceEl) price = priceEl.textContent?.trim() || null;
+                  // 2) Label-based: "Preço líquido único"
+                  if (!price) {
+                    const labels = Array.from(card.querySelectorAll('*')).filter(el => /pre[cç]o/i.test(el.textContent||''));
+                    for (const lbl of labels) {
+                      const txt = (lbl.textContent||'').trim();
+                      if (/pre[cç]o\s*l[ií]quido\s*[uú]nico/i.test(txt)) {
+                        // Try sibling or same node
+                        const sib = lbl.nextElementSibling as HTMLElement | null;
+                        if (sib && sib.textContent) {
+                          const eur = extractEuro(sib.textContent);
+                          if (eur) { price = eur; break; }
+                        }
+                        const eur2 = extractEuro(lbl.textContent);
+                        if (eur2) { price = eur2; break; }
+                      }
+                    }
+                  }
+                  // 3) Fallback: scan entire card text for euro amount
+                  if (!price) {
+                    const eur3 = extractEuro((card as HTMLElement).innerText || '');
+                    if (eur3) price = eur3;
+                  }
+                  const availEl = card.querySelector('[class*="stock" i], [class*="estoque" i], [class*="unidade" i]');
+                  if (availEl) availability = availEl.textContent?.trim() || null;
+                }
+                out.push({ name, href: a.getAttribute('href') || '', price, availability });
+              }
+              return out;
+            });
+            itemsPrefetched = (raw || [])
+              .filter((r: any) => r && r.name && r.href)
+              .map((r: any) => ({
+                name: String(r.name),
+                code: null,
+                price: parsePrice(String(r.price || '')),
+                availability: parseAvailability(String(r.availability || '')),
+                delivery: null,
+                url: extractAbsoluteUrl(String(r.href), searchUrl),
+                store: supplier.name,
+              } as ProductItem));
+            // If still no prices, retry evaluation once more after slight reload
+            const anyPrice = itemsPrefetched.some(i => i.price !== null && i.price !== undefined);
+            if (!anyPrice) {
+              try {
+                await page.reload({ waitUntil: 'domcontentloaded' });
+                await page.waitForTimeout(800);
+                const raw2 = await page.evaluate(() => {
+                  function nearest(el, selectors) {
+                    const list = selectors.split(',');
+                    let cur = el;
+                    for (let depth = 0; depth < 6 && cur; depth++) {
+                      for (const s of list) {
+                        const hit = cur.closest(s.trim());
+                        if (hit) return hit;
+                      }
+                      cur = cur.parentElement;
+                    }
+                    return null;
+                  }
+                  function extractEuro(text) {
+                    if (!text) return null;
+                    const m = text.match(/[€\u20AC]\s*([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)|([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)\s*[€\u20AC]/);
+                    if (!m) return null;
+                    return (m[1] || m[2] || '').trim();
+                  }
+                  const anchors = Array.from(document.querySelectorAll('a[href*="product-detail"]'));
+                  const out = [];
+                  for (const a of anchors) {
+                    const name = (a.textContent || '').trim();
+                    const card = nearest(a, '.product-item, .product, .product-card, .card, .products-item');
+                    let price = null, availability = null;
+                    if (card) {
+                      const priceEl = card.querySelector('.price, .product-price, [class*="price" i]');
+                      if (priceEl) price = priceEl.textContent?.trim() || null;
+                      if (!price) {
+                        const labels = Array.from(card.querySelectorAll('*')).filter(el => /pre[cç]o/i.test(el.textContent||''));
+                        for (const lbl of labels) {
+                          const txt = (lbl.textContent||'').trim();
+                          if (/pre[cç]o\s*l[ií]quido\s*[uú]nico/i.test(txt)) {
+                            const sib = lbl.nextElementSibling;
+                            if (sib && (sib.textContent||'')) {
+                              const eur = extractEuro(sib.textContent||'');
+                              if (eur) { price = eur; break; }
+                            }
+                            const eur2 = extractEuro(lbl.textContent||'');
+                            if (eur2) { price = eur2; break; }
+                          }
+                        }
+                      }
+                      if (!price) {
+                        const eur3 = extractEuro((card).innerText || '');
+                        if (eur3) price = eur3;
+                      }
+                      const availEl = card.querySelector('[class*="stock" i], [class*="estoque" i], [class*="unidade" i]');
+                      if (availEl) availability = availEl.textContent?.trim() || null;
+                    }
+                    out.push({ name, href: a.getAttribute('href') || '', price, availability });
+                  }
+                  return out;
+                });
+                const pref2 = (raw2 || [])
+                  .filter((r: any) => r && r.name && r.href)
+                  .map((r: any) => ({
+                    name: String(r.name),
+                    code: null,
+                    price: parsePrice(String(r.price || '')),
+                    availability: parseAvailability(String(r.availability || '')),
+                    delivery: null,
+                    url: extractAbsoluteUrl(String(r.href), searchUrl),
+                    store: supplier.name,
+                  } as ProductItem));
+                if (pref2 && pref2.length) itemsPrefetched = pref2;
+              } catch {}
+            }
+            // Enrich items without price from detail pages up to limit
+            try {
+              const limitPerSupplier = parseInt(process.env.SUPPLIER_ITEM_LIMIT || '10', 10);
+              const maxDetail = parseInt(process.env.SUPPLIER_DETAIL_LIMIT || '10', 10);
+              const needPriced = Math.max(0, limitPerSupplier);
+              const pricedCount0 = (itemsPrefetched || []).filter(i => i.price !== null && i.price !== undefined).length;
+              if (itemsPrefetched && pricedCount0 < needPriced) {
+                const without = itemsPrefetched.filter(i => i.price === null || i.price === undefined);
+                let fetched = 0;
+                for (const item of without) {
+                  if (fetched >= maxDetail) break;
+                  try {
+                    const tab = await context.newPage();
+                    tab.setDefaultTimeout(40000);
+                    await tab.goto(item.url, { waitUntil: 'domcontentloaded' });
+                    try { await tab.waitForSelector('.price, .product-price, [class*="price" i]', { timeout: 8000 }); } catch {}
+                    const detail = await tab.evaluate(() => {
+                      const priceEl = document.querySelector('.price, .product-price, [class*="price" i]');
+                      const stockEl = document.querySelector('[class*="stock" i], [class*="estoque" i], [class*="unidade" i]');
+                      return {
+                        price: (priceEl?.textContent||'').trim() || null,
+                        availability: (stockEl?.textContent||'').trim() || null,
+                      };
+                    });
+                    item.price = parsePrice(detail.price);
+                    const avn = parseAvailability(detail.availability);
+                    if (avn !== null) item.availability = avn;
+                    await tab.close();
+                    fetched++;
+                    const pricedNow = itemsPrefetched.filter(i => i.price !== null && i.price !== undefined).length;
+                    if (pricedNow >= needPriced) break;
+                  } catch {}
+                }
+              }
+            } catch {}
+          } catch {}
+          html = await page.content();
+          httpStatus = 200;
+          await context.close();
+        } catch (e: any) {
+          console.warn('[AUGER] Playwright flow failed:', e?.message || e);
+        }
+      }
+
+      if (!html) {
+        // Fallback to Firecrawl render
+        fetchResult = await fetchRender(searchUrl, fetchTimeout);
+        html = fetchResult.html;
+        httpStatus = fetchResult.status;
+      }
     }
 
     const searchDuration = Date.now() - searchStart;
@@ -207,11 +455,27 @@ export async function scrapeSupplier(
 
     // Step 2: Parse items
     const extractStart = Date.now();
-    items = parseHtml(html, supplier);
+    if (itemsPrefetched && itemsPrefetched.length > 0) {
+      items = itemsPrefetched;
+    } else {
+      const supplierForParse: any = { ...supplier };
+      if (supplier.name.toLowerCase().includes('auger')) {
+        supplierForParse.selectors = supplierForParse.selectors || {};
+        supplierForParse.selectors.result_selectors = supplierForParse.selectors.result_selectors || {};
+        supplierForParse.selectors.result_selectors.item = 'a[href*="product-detail"]';
+        supplierForParse.selectors.result_selectors.name = 'self' as any;
+        supplierForParse.selectors.result_selectors.link = 'self' as any;
+        supplierForParse.selectors.result_selectors.price = supplierForParse.selectors.result_selectors.price || '.price';
+      }
+      items = parseHtml(html, supplierForParse);
+    }
     const extractDuration = Date.now() - extractStart;
 
     if (items.length === 0) {
-      throw new Error('PARSING_ERROR: No items found with configured selectors');
+      // For AUGER, treat empty as a valid (non-error) response to avoid UI "all suppliers failed"
+      if (!supplier.name.toLowerCase().includes('auger')) {
+        throw new Error('PARSING_ERROR: No items found with configured selectors');
+      }
     }
 
     // Success

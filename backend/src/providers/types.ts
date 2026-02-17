@@ -3,6 +3,7 @@ import { Supplier, SupplierCredential } from '../types';
 export interface ProviderFetchResult {
   html: string;
   status: number;
+  error?: Error;
 }
 
 export interface SupplierProvider {

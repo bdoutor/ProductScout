@@ -61,6 +61,8 @@ export interface ProductItem {
   delivery: string | null;
   url: string;
   store: string;
+  availability_label?: string | null;
+  stock_summary?: string | null;
 }
 
 export interface SearchResponse {
@@ -72,10 +74,12 @@ export interface SearchResponse {
 
 export interface SupplierResult {
   supplier_name: string;
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'pending';
   items_found: number;
   search_run_id?: string;
+  supplier_id?: string;
   error_message?: string;
+   error_details?: string;
 }
 
 export interface TestSupplierResponse {

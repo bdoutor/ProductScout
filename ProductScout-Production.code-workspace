@@ -1,0 +1,48 @@
+{
+  "folders": [
+    {
+      "name": "ProductScout-Production (Root)",
+      "path": "."
+    },
+    {
+      "name": "Backend",
+      "path": "./backend"
+    },
+    {
+      "name": "Frontend",
+      "path": "./frontend"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/.git": false,
+      "**/dist": true,
+      "**/.next": true
+    },
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/.next": true
+    },
+    "editor.formatOnSave": true,
+    // Fallback to built-in formatters to avoid schema errors when Prettier is not installed
+    "editor.defaultFormatter": null,
+    "[typescript]": { "editor.defaultFormatter": "vscode.typescript-language-features" },
+    "[javascript]": { "editor.defaultFormatter": "vscode.typescript-language-features" },
+    "[json]": { "editor.defaultFormatter": "vscode.json-language-features" },
+    "[jsonc]": { "editor.defaultFormatter": "vscode.json-language-features" },
+    "[html]": { "editor.defaultFormatter": "vscode.html-language-features" },
+    "[css]": { "editor.defaultFormatter": "vscode.css-language-features" },
+    "typescript.tsdk": "node_modules/typescript/lib",
+    "git.defaultBranch": "v2-auth"
+  },
+  "extensions": {
+    "recommendations": [
+      "dbaeumer.vscode-eslint",
+      "esbenp.prettier-vscode",
+      "bradlc.vscode-tailwindcss",
+      "ms-vscode.vscode-typescript-next"
+    ]
+  }
+}

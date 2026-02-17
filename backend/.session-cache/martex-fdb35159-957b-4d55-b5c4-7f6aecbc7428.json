@@ -1,0 +1,135 @@
+{
+  "timestamp": 1771337432289,
+  "cookies": [
+    {
+      "name": "lang",
+      "value": "pl-PL",
+      "domain": "sklep.martextruck.pl",
+      "path": "/",
+      "expires": 1805895143.118609,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ASP.NET_SessionId",
+      "value": "crasjg55cm3yaa2znwlvicuz",
+      "domain": "sklep.martextruck.pl",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_gid",
+      "value": "GA1.2.887637508.1771335144",
+      "domain": ".martextruck.pl",
+      "path": "/",
+      "expires": 1771423823,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "CookieConsent",
+      "value": "{stamp:%27e+Ea5Nacp2zIStxT558XDUz3j4h9xu7VZRv50KePLjz3dB8Mkg5Nvw==%27%2Cnecessary:true%2Cpreferences:true%2Cstatistics:true%2Cmarketing:true%2Cmethod:%27explicit%27%2Cver:1%2Cutc:1771335146151%2Cregion:%27pt%27}",
+      "domain": "sklep.martextruck.pl",
+      "path": "/",
+      "expires": 1802871146,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_gcl_au",
+      "value": "1.1.781403964.1771335147",
+      "domain": ".martextruck.pl",
+      "path": "/",
+      "expires": 1779111147,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "IDE",
+      "value": "AHWqTUk2EJHT6b5YE65z2DKCTIBW-6NGanDK4fQF7_QnsxgM3iUP4xv0sxlCXj_m",
+      "domain": ".doubleclick.net",
+      "path": "/",
+      "expires": 1805031147.22189,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_fbp",
+      "value": "fb.1.1771335147303.934303347475123776",
+      "domain": ".martextruck.pl",
+      "path": "/",
+      "expires": 1779113423,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ASCOWebShop",
+      "value": "AB49C32B42C23807BE46A74A08DEEC259AE44ACEB143132B0387614ECF2E532C3ABF8FE3AAC2A1D235010FCD3DE741F980301B67FC81ED715AADFE1B74D59C12FF801387A13F23B94B56FFA590FFD5654DFBEE5354E99649916A9692FA7AB603C46FA7693505DAA135C68B4A49CE35E1C3E3D12A98B54819AAE106F825971C7B2F94CB223C335031EEBD1A0EDCBE1C9DFEDC10D96A415C3AA3D07E36B87700732E4E50E620E0FDEB2A255D7566370902C48C910C4F56AEEFF46BD96A08FE9706D618D7D5FEBE55440AE71A9145F858F2AD4A773E7BF8B3C19BA247DC6682710C6D19FB89D27BD707E1CB0CC9F67E59AADB3FC29236D75D45C189D1E5818633114EAAA27D",
+      "domain": "sklep.martextruck.pl",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "change_client_price_EC01",
+      "value": "0",
+      "domain": "sklep.martextruck.pl",
+      "path": "/",
+      "expires": 1771939954.015895,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_gat",
+      "value": "1",
+      "domain": ".martextruck.pl",
+      "path": "/",
+      "expires": 1771337468,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_gat_gtag_UA_171830316_1",
+      "value": "1",
+      "domain": ".martextruck.pl",
+      "path": "/",
+      "expires": 1771337468,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga_7EMMPRW0NF",
+      "value": "GS2.1.s1771337177$o2$g1$t1771337423$j46$l0$h0",
+      "domain": ".martextruck.pl",
+      "path": "/",
+      "expires": 1805897423.951867,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga",
+      "value": "GA1.1.627895455.1771335144",
+      "domain": ".martextruck.pl",
+      "path": "/",
+      "expires": 1805897423.953168,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ]
+}

@@ -73,12 +73,21 @@ Isto irá:
 1. ✅ Verificar e limpar processos antigos
 2. ✅ Iniciar o backend (porta 3001)
 3. ✅ Iniciar o frontend (porta 3000)
-4. ✅ Abrir automaticamente o browser
+4. ✅ Abrir automaticamente o browser na página de LOGIN
 5. ✅ Gerar logs detalhados
 
 **Pronto em ~15 segundos!** 🚀
 
+📝 **Login credentials:**
+- Username: `admin`
+- Password: `admin`
+
 Para parar tudo: **Duplo-clique em:** `stop-all.bat`
+
+🔗 **Acesso direto:**
+- Login: http://localhost:3000/login
+- Admin Panel: http://localhost:3000/admin
+- Backend API: http://localhost:3001
 
 📖 **Ver guia completo:** [docs/COMO-USAR.md](docs/COMO-USAR.md)
 

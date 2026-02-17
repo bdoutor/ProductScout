@@ -1,9 +1,10 @@
 {
   "name": "productscout-frontend",
-  "version": "2.0.0",
+  "version": "2.0.0-alpha.2",
   "description": "ProductScout web interface - Automotive parts edition",
   "scripts": {
-    "dev": "next dev",
+    "dev": "node open-next-dev.js",
+    "dev:raw": "node dev-raw.js",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

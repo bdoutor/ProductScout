@@ -1,17 +1,50 @@
-import { Supplier, SupplierCredential } from '../types';
+import type { Locator } from 'playwright';
 import { SupplierProvider, ProviderFetchResult } from './types';
+import { Supplier, SupplierCredential } from '../types';
 import { getBrowser } from './playwright';
 import { logger } from '../utils/logger';
+import { loadSessionCache, saveSessionCache, clearSessionCache } from '../utils/session-cache';
+import { withRetry } from '../utils/retry-helper';
 
-function isPlaywrightEnabled(): boolean {
-  return process.env.ENABLE_PLAYWRIGHT_LOGIN === '1' || process.env.ENABLE_PLAYWRIGHT_LOGIN === 'true';
+const PLAYWRIGHT_LOGIN_ENABLED = (): boolean =>
+  process.env.ENABLE_PLAYWRIGHT_LOGIN === '1' ||
+  process.env.ENABLE_PLAYWRIGHT_LOGIN === 'true';
+
+const PASSWORD_SELECTOR_FALLBACK =
+  'input[name="password"], input[type="password"], [id=":r1:"], input#password';
+const USER_SELECTOR_FALLBACK =
+  'input[name="emailAddress"], input[type="email"], [id=":r0:"], input#email, input[type="text"]';
+
+function normalizeSelector(sel: string | undefined | null): string | null {
+  if (!sel) return null;
+  if (sel.startsWith('[id=')) return sel;
+  if (sel.startsWith('#:')) {
+    return `[id="${sel.slice(1)}"]`;
+  }
+  return sel;
+}
+
+async function findLocator(page: import('playwright').Page, selectors: string[]): Promise<{ selector: string; locator: Locator } | null> {
+  for (const raw of selectors) {
+    const normalized = normalizeSelector(raw);
+    if (!normalized) continue;
+    try {
+      const locator = page.locator(normalized).first();
+      if (await locator.count() > 0) {
+        return { selector: normalized, locator };
+      }
+    } catch {
+      logger.debug('Selector failed for %s', normalized);
+    }
+  }
+  return null;
 }
 
 export class AugerProvider implements SupplierProvider {
   supports(supplier: Supplier): boolean {
-    const isAuger = supplier.name.toLowerCase().includes('auger');
-    logger.debug('[AugerProvider] Checking support for %s: %s', supplier.name, isAuger);
-    return isAuger;
+    const supported = supplier.name.toLowerCase().includes('auger');
+    logger.debug('[AugerProvider] checking support for %s => %s', supplier.name, supported);
+    return supported;
   }
 
   async loginAndFetch(
@@ -20,357 +53,269 @@ export class AugerProvider implements SupplierProvider {
     searchUrl: string,
     timeoutMs: number = parseInt(process.env.PLAYWRIGHT_NAV_TIMEOUT_MS || '25000', 10)
   ): Promise<ProviderFetchResult> {
-    logger.auger('[loginAndFetch] Starting with searchUrl: %s', searchUrl);
+    const result: ProviderFetchResult = { html: '', status: 500 };
+    const cacheKey = String(supplier.id || supplier.name || 'auger');
 
-    if (!isPlaywrightEnabled()) {
-      logger.error('Playwright disabled - check ENABLE_PLAYWRIGHT_LOGIN env var');
-      throw new Error('PLAYWRIGHT_DISABLED');
+    if (!PLAYWRIGHT_LOGIN_ENABLED()) {
+      logger.warn('[AugerProvider] Playwright login disabled via env flag');
+      return result;
     }
 
     if (!credential?.login || !credential?.password) {
-      logger.error('Missing credentials for Auger');
-      throw new Error('AUGER_MISSING_CREDENTIALS');
+      logger.error('[AugerProvider] Missing login credentials for Auger');
+      return result;
     }
 
-    logger.auger('Initializing browser...');
     const browser = await getBrowser();
-    const context = await browser.newContext({
-      ignoreHTTPSErrors: true,
-      viewport: { width: 1366, height: 860 },
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      locale: 'pt-PT',
-    });
-    logger.auger('Browser context created, setting up page...');
-    await context.addInitScript(() => {
-      // executed in the browser context
-      // @ts-ignore
-      Object.defineProperty(window.navigator, 'webdriver', { get: () => undefined });
-      // @ts-ignore
-      Object.defineProperty(window.navigator, 'languages', { get: () => ['pt-PT', 'pt', 'en-US'] });
-    });
-    const page = await context.newPage();
-    page.setDefaultTimeout(timeoutMs);
+    let context: Awaited<ReturnType<typeof browser.newContext>> | undefined;
+    let page: Awaited<ReturnType<typeof browser.newPage>> | undefined;
 
     try {
-      const loginUrl: string = (supplier as any).login_url || credential.url || supplier.base_url;
-      logger.auger('Navigating to login URL: %s', loginUrl);
+      const cachedCookies = loadSessionCache(cacheKey);
+      context = await browser.newContext({
+        ignoreHTTPSErrors: true,
+        viewport: { width: 1366, height: 860 },
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        storageState: cachedCookies ? { cookies: cachedCookies } : undefined
+      });
+      page = await context.newPage();
+      page.setDefaultTimeout(timeoutMs);
 
-      await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
-      logger.auger('Page loaded, waiting for login form...');
+      const loginUrl: string =
+        (supplier as any).login_url || credential.url || supplier.base_url || 'https://portal.iamauger.com/login';
 
-      // Ensure form is present (wait briefly)
+      const navigateToSearch = async () => {
+        await page.goto(searchUrl, { waitUntil: 'networkidle' });
+      };
+
+      const isLoginPage = async (): Promise<boolean> => {
+        const current = page.url().toLowerCase();
+        if (current.includes('/login')) return true;
+        const loginForm = await page.$('#Login');
+        return Boolean(loginForm);
+      };
+
+      let sessionValid = false;
+      let needsNavigationAfterLogin = true;
+
       try {
-        await page.waitForSelector('input[name="emailAddress"]', { timeout: 8000 });
-        logger.auger('Login form found');
-      } catch (e) {
-        logger.warn('Login form not immediately visible, will try selectors anyway');
-      }
-
-      // Try to accept cookies if present
-      const cookieButtons = [
-        'button:has-text("Accept")',
-        'button:has-text("Aceitar")',
-        '#onetrust-accept-btn-handler',
-        'button[aria-label*="accept"]'
-      ];
-      for (const btn of cookieButtons) {
-        const el = await page.$(btn);
-        if (el) { await el.click({ force: true }).catch(() => { }); break; }
-      }
-
-      logger.auger('Attempting to close modal overlay...');
-
-      // Close modal overlay if covering the form
-      const closeButtons = ['.modalOverlay .close', '.modalContent .close', '.modalOverlay', 'button.close'];
-      for (const sel of closeButtons) {
-        const el = await page.$(sel);
-        if (el) {
-          try {
-            await el.click({ force: true });
-            await page.waitForTimeout(1000);
-            logger.auger('Clicked close button: %s', sel);
-          } catch (e) {
-            logger.warn('Failed to click close button %s: %s', sel, e);
-          }
+        await navigateToSearch();
+        if (!(await isLoginPage())) {
+          sessionValid = true;
+          needsNavigationAfterLogin = false;
+          logger.auger('[AugerProvider] Reusing cached session');
         }
+      } catch (err) {
+        logger.warn('[AugerProvider] initial session check failed: %s', (err as Error).message);
       }
 
-      // Remove overlay via JavaScript if still present
-      try {
+      if (!sessionValid) {
+       logger.auger('[AugerProvider] Session invalid or missing, starting login flow');
+        clearSessionCache(cacheKey);
+
+        await context.clearCookies();
+
+       await withRetry(
+         () => page.goto(loginUrl, { waitUntil: 'networkidle' }),
+         { context: 'Auger login navigation' }
+       );
+
+       await withRetry(
+         () => page.waitForSelector(USER_SELECTOR_FALLBACK, { timeout: 6000 }),
+         { context: 'waiting for login form', maxRetries: 2 }
+       ).catch(() => logger.warn('[AugerProvider] login fields not immediately visible'));
+
+        await withRetry(
+          () => page.waitForSelector(PASSWORD_SELECTOR_FALLBACK, { timeout: 6000 }),
+          { context: 'waiting for password field', maxRetries: 2 }
+        ).catch(() => logger.warn('[AugerProvider] password field not immediately visible'));
+
+        const cookieButtons = [
+          'button:has-text("Accept")',
+          'button:has-text("Aceitar")',
+          '#onetrust-accept-btn-handler',
+          'button[aria-label*="accept"]'
+        ];
+        for (const btn of cookieButtons) {
+          try {
+            const cookieLocator = page.locator(btn).first();
+            if (await cookieLocator.count() > 0) {
+              await cookieLocator.click({ force: true });
+              break;
+            }
+          } catch { /* ignore */ }
+        }
+
+        const overlaySelectors = ['.modalOverlay .close', '.modalContent .close', '.modalOverlay', 'button.close'];
+        for (const sel of overlaySelectors) {
+          try {
+            const overlay = page.locator(sel).first();
+            if (await overlay.count() > 0) {
+              await overlay.click({ force: true });
+            }
+          } catch { /* ignore */ }
+        }
+
         await page.evaluate(() => {
           const overlays = document.querySelectorAll('.modalOverlay, .modalContent');
           overlays.forEach(el => el.remove());
-          return overlays.length;
-        }).then(count => {
-          if (count > 0) logger.auger('Removed %d overlays via JS', count);
-        });
-      } catch (e) {
-        logger.warn('Failed to remove overlays via JS:', e);
-      }
+        }).catch(() => logger.debug('[AugerProvider] overlay removal via JS failed'));
 
-      // Ensure modals are gone
-      await page.waitForTimeout(1000);
+        await page.waitForTimeout(800);
 
-      // Candidate selectors (allow DB-provided selectors first)
-      const userSelectors = [
-        supplier.login_selector,
-        'input[name="emailAddress"]',
-        '#:r0:', // Selector específico do Auger visto no HTML
-        'input[name="username"]',
-        'input[name="email"]',
-        'input[type="email"]',
-        'input#username',
-        'input#email',
-        'input[type="text"]'
-      ].filter(Boolean) as string[];
-
-      const passSelectors = [
-        supplier.password_selector,
-        'input[name="password"]',
-        '#:r1:', // Selector específico do Auger visto no HTML
-        'input#password',
-        'input[type="password"]'
-      ].filter(Boolean) as string[];
-
-      const submitSelectors = [
-        supplier.submit_selector,
-        '.btn-login',
-        'button.btn-login',
-        'button.form-control.btn.btn-primary.mb-2.btn-login', // Selector completo do Auger
-        'button[type="submit"]',
-        'input[type="submit"]',
-        'button:has-text("Login")',
-        'button:has-text("Entrar")',
-        'button:has-text("Sign in")'
-      ].filter(Boolean) as string[];
-
-      logger.auger('Trying to find login form elements...');
-
-      let uSel: string | null = null;
-      for (const sel of userSelectors) {
-        if (await page.$(sel)) {
-          uSel = sel;
-          logger.auger('Found username field with selector: %s', sel);
-          break;
-        }
-      }
-
-      let pSel: string | null = null;
-      for (const sel of passSelectors) {
-        if (await page.$(sel)) {
-          pSel = sel;
-          logger.auger('Found password field with selector: %s', sel);
-          break;
-        }
-      }
-
-      let sSel: string | null = null;
-      for (const sel of submitSelectors) {
-        if (await page.$(sel)) {
-          sSel = sel;
-          logger.auger('Found submit button with selector: %s', sel);
-          break;
-        }
-      }
-
-      if (!uSel || !pSel || !sSel) {
-        logger.error('Login form elements not found. Username: %s, Password: %s, Submit: %s',
-          uSel ? 'OK' : 'Missing',
-          pSel ? 'OK' : 'Missing',
-          sSel ? 'OK' : 'Missing'
-        );
-        throw new Error('AUGER_LOGIN_FORM_NOT_FOUND');
-      }
-
-      await page.focus(uSel);
-      await page.fill(uSel, '');
-      await page.type(uSel, credential.login, { delay: 30 });
-      await page.focus(pSel);
-      await page.fill(pSel, '');
-      await page.type(pSel, credential.password || '', { delay: 30 });
-
-      // Try submitting by click first
-      let submitted = false;
-
-      try {
-        logger.auger('Attempting to submit login form...');
-        await page.click(sSel, { force: true });
-        logger.auger('Clicked submit button, waiting for navigation...');
-
-        // Longer wait for login processing
-        await Promise.race([
-          page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }),
-          new Promise(r => setTimeout(r, 15000))
+        const username = await findLocator(page, [
+          supplier.login_selector || '',
+          USER_SELECTOR_FALLBACK
         ]);
+        let passwordInput = await findLocator(page, [
+          supplier.password_selector || '',
+          PASSWORD_SELECTOR_FALLBACK
+        ]);
+        if (!passwordInput) {
+          const fallback = page.locator('input[type="password"]').first();
+          if (await fallback.count() > 0) {
+            passwordInput = { selector: 'input[type="password"]', locator: fallback };
+          }
+        }
 
-        submitted = true;
-        logger.auger('Login form submitted via click');
-      } catch (e) {
-        logger.warn('Click submit failed:', e);
-      }
+        let submitButton = await findLocator(page, [
+          supplier.submit_selector || '',
+          '.btn-login',
+          'button.btn-login',
+          'button.form-control.btn.btn-primary.mb-2.btn-login',
+          'button[type="submit"]',
+          'input[type="submit"]',
+          'button:has-text("Login")',
+          'button:has-text("Entrar")',
+          'button:has-text("Sign in")'
+        ]);
+        if (!submitButton) {
+          const fallbackSubmit = page.locator('button.btn-login, button[type="submit"]').first();
+          if (await fallbackSubmit.count() > 0) {
+            submitButton = { selector: 'button[type="submit"]', locator: fallbackSubmit };
+          }
+        }
 
-      // Fallback to Enter key if click failed
-      if (!submitted) {
-        logger.auger('Click submit failed, trying Enter key...');
+        if (!username || !passwordInput || !submitButton) {
+          logger.error('[AugerProvider] missing login fields (username=%s password=%s submit=%s)',
+            !!username, !!passwordInput, !!submitButton);
+          throw new Error('AUGER_LOGIN_FORM_NOT_FOUND');
+        }
+
+        await withRetry(async () => {
+          await username.locator.fill('');
+          await username.locator.type(credential.login, { delay: 30 });
+          await passwordInput.locator.fill('');
+          await passwordInput.locator.type(credential.password || '', { delay: 30 });
+        }, { context: 'Auger filling credentials', maxRetries: 2 });
+
+        let submitted = false;
         try {
-          await page.focus(pSel);
-          await page.keyboard.press('Enter');
-
-          // Longer wait for login processing
+          await submitButton.locator.click({ force: true });
           await Promise.race([
             page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }),
-            new Promise(r => setTimeout(r, 15000))
+            page.waitForTimeout(15000)
           ]);
-
           submitted = true;
-          logger.auger('Login form submitted via Enter key');
-        } catch (e) {
-          logger.warn('Enter key submit failed:', e);
+        } catch (err) {
+          logger.warn('[AugerProvider] submit click failed: %s', (err as Error).message);
         }
-      }
 
-      // Wait for evidence of login success
-      try {
-        await page.waitForSelector('#Login', { state: 'detached', timeout: 8000 });
-        logger.auger('Login form disappeared, probable success');
-      } catch (e) {
-        logger.warn('Login form still present:', e);
-      }
+        if (!submitted) {
+          try {
+            await passwordInput.locator.focus();
+            await page.keyboard.press('Enter');
+            await Promise.race([
+              page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }),
+              page.waitForTimeout(15000)
+            ]);
+            submitted = true;
+          } catch (err) {
+            logger.warn('[AugerProvider] submit via Enter failed: %s', (err as Error).message);
+          }
+        }
 
-      // Double check login status
-      const currentUrl = (page.url() || '').toLowerCase();
-      const stillHasLogin = (await page.$('#Login')) || (await page.$(uSel)) || (await page.$(pSel)) || (await page.$(sSel));
-      if (currentUrl.includes('/login') || stillHasLogin) {
-        logger.error('Still on login page after submit attempts');
-        await context.close();
-        throw new Error('LOGIN_FAILED: Still on login page after submit');
-      }
-      logger.auger('Successfully logged in');
+        if (!submitted) {
+          throw new Error('LOGIN_FAILED: Unable to submit login form');
+        }
 
-      // Extract the query from the searchUrl if present
-      let q = '';
-      try {
-        const u = new URL(searchUrl);
-        q = u.searchParams.get('keyword') || u.searchParams.get('q') || '';
-      } catch (e) {
-        logger.warn('Failed to parse search URL:', e);
-      }
-
-      // Try on-page search if available
-      const searchInput = await page.$('input[type="search"], input[placeholder*="Search" i], input[placeholder*="Pesquisar" i], input[placeholder*="procurando" i]');
-      if (searchInput && q) {
-        logger.auger('Found search input, attempting on-page search');
-        await searchInput.fill('');
-        await searchInput.type(q);
-        await page.keyboard.press('Enter');
-        await Promise.race([
-          page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-          page.waitForTimeout(4000),
-        ]);
-        logger.auger('On-page search completed');
-      } else {
-        // Fallback to direct URL navigation
-        logger.auger('No search input found, navigating directly to search URL');
-        await page.waitForTimeout(2000); // Let session stabilize
-
-        logger.auger('Navigating to: %s', searchUrl);
-        await page.goto(searchUrl, {
-          waitUntil: 'networkidle',
-          timeout: 20000
+        await page.waitForSelector('#Login', { state: 'detached', timeout: 8000 }).catch(() => {
+          logger.warn('[AugerProvider] login form still present after submit');
         });
-        logger.auger('Search page loaded');
 
-        // Verify we're not bounced back to login
-        const atLoginDom = Boolean(await page.$('#Login')) || Boolean(await page.$('input[name="emailAddress"]'));
-        const atLoginUrl = page.url().toLowerCase().includes('/login');
-
-        if (atLoginDom || atLoginUrl) {
-          const currentUrl = page.url();
-          logger.error('Still on login page after navigation. URL: %s, LoginForm: %s',
-            currentUrl, atLoginDom ? 'Present' : 'Not Found');
-
-          // Capture screenshot for debugging
-          try {
-            const screenshotPath = 'auger-login-failed.png';
-            await page.screenshot({ path: screenshotPath });
-            logger.auger('Login failure screenshot saved to: %s', screenshotPath);
-          } catch (screenshotErr) {
-            logger.error('Failed to save debug screenshot:', screenshotErr);
-          }
-
-          await context.close();
-          throw new Error('LOGIN_FAILED: Still on login page after navigation');
+        const afterLoginUrl = page.url().toLowerCase();
+        if (afterLoginUrl.includes('/login')) {
+          throw new Error('LOGIN_FAILED: Still on login page after submit');
         }
 
-        // Wait for results using multiple selectors
-        const resultSelectors = [
-          '.product-item',
-          'tr.product',
-          '.search-result-item',
-          '.product-list',
-          '.search-results',
-          'table.results'
-        ];
-
-        let resultsFound = false;
-        for (const selector of resultSelectors) {
-          try {
-            await page.waitForSelector(selector, { timeout: 5000 });
-            logger.auger('Found results with selector: %s', selector);
-            resultsFound = true;
-            break;
-          } catch (e) {
-            logger.debug('Selector not found: %s', selector);
-          }
-        }
-
-        if (!resultsFound) {
-          logger.warn('No results found with known selectors - page may still be loading');
-        }
-
-        // Final wait for any pending network activity
-        await page.waitForLoadState('networkidle');
-
-        // Get final page content
-        const html = await page.content();
-        const status = 200;  // If we got here, page loaded
-
-        // Save debug screenshot if needed
-        if (process.env.DEBUG) {
-          await page.screenshot({ path: 'auger-results.png' });
-          logger.debug('Saved debug screenshot as auger-results.png');
-        }
-
-        // Clean up
-        await context.close();
-        logger.auger('Search completed successfully');
-        return { html, status };
+        sessionValid = true;
+        needsNavigationAfterLogin = true;
       }
 
-    } catch (e) {
-      // Make sure we clean up even on error
+      if (!sessionValid) {
+        throw new Error('LOGIN_FAILED: Unable to obtain authenticated session');
+      }
+
+      if (needsNavigationAfterLogin) {
+        await navigateToSearch();
+      }
+
+      // Navigate/perform search
+      let query = '';
       try {
-        await context.close();
-      } catch (closeError) {
-        logger.error('Failed to close browser context:', closeError);
+        const parsed = new URL(searchUrl);
+        query = parsed.searchParams.get('keyword') || parsed.searchParams.get('q') || '';
+      } catch {
+        query = '';
       }
-      throw e;
+
+      if (query) {
+        try {
+          const searchInput = await findLocator(page, [
+            'input[name="keyword"]',
+            'input[type="search"]',
+            'input[placeholder*="Search"]',
+            'input[placeholder*="Pesquisar"]'
+          ]);
+          if (searchInput) {
+            await searchInput.locator.fill('');
+            await searchInput.locator.type(query, { delay: 50 });
+            await page.keyboard.press('Enter');
+            await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+          } else {
+            await page.goto(searchUrl, { waitUntil: 'networkidle', timeout: 20000 });
+          }
+        } catch (err) {
+          logger.warn('[AugerProvider] inline search failed, navigating directly: %s', (err as Error).message);
+          await page.goto(searchUrl, { waitUntil: 'networkidle', timeout: 20000 });
+        }
+      } else {
+        await page.goto(searchUrl, { waitUntil: 'networkidle', timeout: 20000 });
+      }
+
+      await page.waitForTimeout(2000);
+
+      result.html = await page.content();
+      result.status = 200;
+
+      if (context) {
+        const cookies = await context.cookies();
+        saveSessionCache(cacheKey, cookies);
+      }
+    } catch (err) {
+      logger.error('[AugerProvider] login flow failed: %s', (err as Error).message);
+      clearSessionCache(cacheKey);
+      result.error = err as Error;
+    } finally {
+      try {
+        if (page) await page.close();
+        if (context) await context.close();
+      } catch (cleanupErr) {
+        logger.warn('[AugerProvider] cleanup warning: %s', (cleanupErr as Error).message);
+      }
     }
 
-    const html = await page.content();
-    const status = 200;  // Se chegamos aqui, a página carregou
-
-    // Capturar screenshot para debug se necessário
-    if (process.env.DEBUG) {
-      await page.screenshot({ path: 'auger-results.png' });
-    }
-
-    await context.close();
-    return { html, status };
-  } catch(e) {
-    await context.close();
-    throw e;
+    return result;
   }
-}
 }

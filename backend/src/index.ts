@@ -7,12 +7,17 @@ import { safeHelmet, safeRateLimit } from './utils/safe-middlewares';
 import searchRouter from './routes/search';
 import authRouter from './routes/auth';
 import supplierCredsRouter from './routes/supplier-creds';
+import testSearchRouter from './routes/test-search';
+import mockSearchRouter from './routes/mock-search';
 import { isSupabaseConfigured, trySupabasePing } from './utils/supabase';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const enableMockRoutes =
+  process.env.ENABLE_MOCK_ROUTES === '1' ||
+  process.env.ENABLE_MOCK_ROUTES === 'true';
 
 // Middleware
 app.use(safeHelmet());
@@ -43,6 +48,10 @@ app.get('/health', async (req, res) => {
 
 // Routes
 app.use('/api', searchRouter);
+if (enableMockRoutes) {
+  app.use('/api', testSearchRouter);
+  app.use('/api', mockSearchRouter);
+}
 app.use('/auth', authRouter);
 app.use('/admin/supplier-creds', supplierCredsRouter);
 
@@ -58,4 +67,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 app.listen(PORT, () => {
   console.log(`ProductScout API running on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+  if (!enableMockRoutes) {
+    console.log('Mock routes disabled (set ENABLE_MOCK_ROUTES=true to re-enable)');
+  }
 });

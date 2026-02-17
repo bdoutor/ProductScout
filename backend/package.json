@@ -1,11 +1,14 @@
 {
   "name": "productscout-backend",
-  "version": "2.0.0",
+  "version": "2.0.0-alpha.2",
   "description": "ProductScout backend API service - Automotive parts edition",
   "main": "dist/index.js",
   "scripts": {
+    "predev": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\windows\\kill-ports.ps1 -Ports 3001",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
+    "preflight:real": "ts-node --transpile-only scripts/preflight-real.ts",
+    "prestart": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\windows\\kill-ports.ps1 -Ports 3001",
     "start": "node dist/index.js",
     "test": "jest"
   },

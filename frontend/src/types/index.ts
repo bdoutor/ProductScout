@@ -6,14 +6,34 @@ export interface ProductItem {
   delivery: string | null;
   url: string;
   store: string;
+  availability_label?: string | null;
+  stock_summary?: string | null;
 }
 
 export interface SupplierResult {
   supplier_name: string;
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'pending';
   items_found: number;
   search_run_id?: string;
+  supplier_id?: string;
   error_message?: string;
+  error_details?: string;
+}
+
+export interface ProgressiveSearchStartResponse {
+  run_id?: string;
+  total_suppliers?: number;
+  poll_interval_ms?: number;
+  fallback?: SearchResponse;
+}
+
+export interface ProgressiveSearchProgressResponse extends SearchResponse {
+  run_id: string;
+  total_suppliers: number;
+  completed_suppliers: number;
+  done: boolean;
+  error?: string;
+  last_update?: string;
 }
 
 export interface SearchResponse {

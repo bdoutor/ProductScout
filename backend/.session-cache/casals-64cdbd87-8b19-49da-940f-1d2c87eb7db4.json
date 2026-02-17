@@ -1,0 +1,25 @@
+{
+  "timestamp": 1771337426357,
+  "cookies": [
+    {
+      "name": "mysheet",
+      "value": "orange-theme",
+      "domain": "pedidos.casalsmd.com",
+      "path": "/",
+      "expires": 1773929415,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "PHPSESSID",
+      "value": "rreehb3j5q7g8teugdppkklgb6",
+      "domain": "pedidos.casalsmd.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ]
+}

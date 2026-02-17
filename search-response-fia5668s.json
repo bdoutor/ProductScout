@@ -1,0 +1,45 @@
+﻿{
+    "query":  "FIA.5668S",
+    "items":  [
+                  {
+                      "name":  "Air Filter",
+                      "code":  "FIA.5668S",
+                      "price":  null,
+                      "availability":  1,
+                      "availability_label":  "In stock",
+                      "delivery":  null,
+                      "url":  "https://nipocar.pt/en-gb/peca/air-filter-fia5668s",
+                      "store":  "Nipocar"
+                  }
+              ],
+    "per_supplier":  [
+                         {
+                             "supplier_name":  "Martex",
+                             "supplier_id":  "fdb35159-957b-4d55-b5c4-7f6aecbc7428",
+                             "status":  "success",
+                             "items_found":  0,
+                             "search_run_id":  "e963dc8f-f305-4eed-b3a1-d76b14d33629"
+                         },
+                         {
+                             "supplier_name":  "Casals",
+                             "supplier_id":  "64cdbd87-8b19-49da-940f-1d2c87eb7db4",
+                             "status":  "success",
+                             "items_found":  0,
+                             "search_run_id":  "aea72a07-97e2-495f-82e7-18b3edb685b4"
+                         },
+                         {
+                             "supplier_name":  "AUGER",
+                             "supplier_id":  "8ea2b119-ce6a-4102-b1dc-ba6a8f118b62",
+                             "status":  "success",
+                             "items_found":  0,
+                             "search_run_id":  "0b01cb01-6722-47ca-90a9-5c6b6369b698"
+                         },
+                         {
+                             "supplier_name":  "Nipocar",
+                             "supplier_id":  "ae4b0c9c-b895-41f0-b3ad-deadebecaee9",
+                             "status":  "success",
+                             "items_found":  1,
+                             "search_run_id":  "475e53b9-aa06-4565-89c6-4e63a3376d1c"
+                         }
+                     ]
+}

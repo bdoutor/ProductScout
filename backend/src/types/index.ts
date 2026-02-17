@@ -5,6 +5,14 @@ export interface Supplier {
   base_url: string;
   mode: 'http' | 'render';
   search_url_template: string;
+  // Optional auth/login fields for transitional support
+  login_url?: string | null;
+  url?: string | null; // some schemas use 'url' for login page
+  login?: string | null;
+  password?: string | null;
+  login_selector?: string | null;
+  password_selector?: string | null;
+  submit_selector?: string | null;
   selectors: {
     result_selectors: {
       item: string;
@@ -53,6 +61,8 @@ export interface ProductItem {
   delivery: string | null;
   url: string;
   store: string;
+  availability_label?: string | null;
+  stock_summary?: string | null;
 }
 
 export interface SearchResponse {
@@ -64,10 +74,12 @@ export interface SearchResponse {
 
 export interface SupplierResult {
   supplier_name: string;
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'pending';
   items_found: number;
   search_run_id?: string;
+  supplier_id?: string;
   error_message?: string;
+   error_details?: string;
 }
 
 export interface TestSupplierResponse {
@@ -81,4 +93,15 @@ export enum ErrorType {
   PARSING_ERROR = 'PARSING_ERROR',
   BLOCKED_BY_ROBOT = 'BLOCKED_BY_ROBOT',
   UNKNOWN_ERROR = 'UNKNOWN_ERROR'
+}
+
+// Minimal shape for supplier credentials stored in DB
+export interface SupplierCredential {
+  id: string;
+  name: string; // should match supplier.name
+  login: string;
+  password?: string; // encrypted at rest; decrypted only at runtime
+  url: string; // login URL
+  notes?: string | null;
+  active: boolean;
 }

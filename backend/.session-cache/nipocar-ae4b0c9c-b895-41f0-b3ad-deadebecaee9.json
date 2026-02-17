@@ -1,0 +1,55 @@
+{
+  "timestamp": 1771337451747,
+  "cookies": [
+    {
+      "name": ".ASPXANONYMOUS",
+      "value": "36xHSKbW3AEgAAAAYmM5MzMwYjI0ZDk2NGJjYzg1NjZjMzJhODljMzNiYjSXr4haXt4uPF6XBZahDBtJF-39Fg2",
+      "domain": "nipocar.pt",
+      "path": "/",
+      "expires": 1777336257,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ASP.NET_SessionId",
+      "value": "tvhimh55scfy5k2av5nk4e24",
+      "domain": "nipocar.pt",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "NewCookieDirectiveControl",
+      "value": "1",
+      "domain": "nipocar.pt",
+      "path": "/",
+      "expires": 1802872260,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ak_glo_var",
+      "value": "\"isB2C\":\"0\",\"PricetypeID\":\"5\",\"registrationEmail\":\"nipo@nipocar.pt\"",
+      "domain": "nipocar.pt",
+      "path": "/",
+      "expires": 1771422660,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "parentLocationHash",
+      "value": "/pt-pt/pesquisa-oe?search=filtro",
+      "domain": "nipocar.pt",
+      "path": "/",
+      "expires": 1771423846,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ]
+}

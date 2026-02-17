@@ -1,0 +1,85 @@
+import React from 'react';
+import { ProductItem } from '@/types';
+
+interface ResultsTableProps {
+  items: ProductItem[];
+  onViewDetails?: (item: ProductItem) => void;
+}
+
+const ResultsTable: React.FC<ResultsTableProps> = ({ items, onViewDetails }) => {
+  const formatPrice = (price: number | null): string => {
+    if (price === null) return 'N/A';
+    return `€${price.toFixed(2)}`;
+  };
+
+  const formatAvailability = (availability: number | null): React.ReactNode => {
+    if (availability === null) {
+      return <span className="text-gray-400">Unknown</span>;
+    }
+
+    if (availability === 0) {
+      return <span className="badge badge-error">Out of stock</span>;
+    }
+
+    return (
+      <span className="badge badge-success">
+        {availability > 1 ? `${availability} in stock` : 'In stock'}
+      </span>
+    );
+  };
+
+  if (items.length === 0) {
+    return (
+      <div className="text-center py-12 text-gray-500">
+        No products found. Try a different search query.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Store</th>
+            <th>Product</th>
+            <th>Code</th>
+            <th>Price</th>
+            <th>Delivery</th>
+            <th>Availability</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, index) => (
+            <tr key={index} className={item.availability === 0 ? 'opacity-50' : ''}>
+              <td className="font-medium">{item.store}</td>
+              <td className="max-w-md">
+                <div className="truncate" title={item.name}>
+                  {item.name}
+                </div>
+              </td>
+              <td className="text-gray-600">{item.code || '—'}</td>
+              <td className="font-semibold text-blue-600">{formatPrice(item.price)}</td>
+              <td className="text-gray-600">{item.delivery || '—'}</td>
+              <td>{formatAvailability(item.availability)}</td>
+              <td>
+                <a
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:text-blue-800 underline text-sm"
+                >
+                  View on site
+                </a>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+export default ResultsTable;
+

@@ -1,26 +1,38 @@
 {
   "name": "productscout-backend",
-  "version": "2.0.0",
+  "version": "2.0.0-alpha.2",
   "description": "ProductScout backend API service - Automotive parts edition",
   "main": "dist/index.js",
   "scripts": {
+    "predev": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\windows\\kill-ports.ps1 -Ports 3001",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
+    "preflight:real": "ts-node --transpile-only scripts/preflight-real.ts",
+    "prestart": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\windows\\kill-ports.ps1 -Ports 3001",
     "start": "node dist/index.js",
     "test": "jest"
   },
-  "keywords": ["product", "search", "scraper"],
+  "keywords": [
+    "product",
+    "search",
+    "scraper"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.2",
     "cheerio": "^1.0.0-rc.12",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "express-session": "^1.18.2",
+    "helmet": "^7.1.0",
     "node-cache": "^5.1.2",
-    "p-limit": "^3.1.0"
+    "p-limit": "^3.1.0",
+    "playwright": "^1.56.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

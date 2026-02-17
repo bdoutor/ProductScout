@@ -1,0 +1,481 @@
+﻿import * as cheerio from 'cheerio';
+import { ProductItem, Supplier } from '../types';
+
+const MARTEX_DEFAULT_BASE_URL = 'https://sklep.martextruck.pl';
+
+/**
+ * Parse price string to number (handles EU and US formats)
+ */
+export function parsePrice(priceStr: string | undefined | null): number | null {
+  if (!priceStr) return null;
+
+  // Remove currency symbols and any non-numeric characters (keep digits, dots, commas, minus)
+  let cleaned = priceStr.replace(/[^0-9.,-]/g, '').trim();
+
+  // Determine decimal separator by the last occurrence
+  const lastComma = cleaned.lastIndexOf(',');
+  const lastDot = cleaned.lastIndexOf('.');
+
+  if (lastComma > lastDot) {
+    // EU style: 1.234,56 -> 1234.56
+    cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+  } else {
+    // US style or no decimals: 1,234.56 -> 1234.56
+    cleaned = cleaned.replace(/,/g, '');
+  }
+
+  const parsed = parseFloat(cleaned);
+  return isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * Parse availability to number (e.g., "Em stock (3)" -> 3, "Stock: 0" -> 0)
+ */
+export function parseAvailability(availStr: string | undefined | null): number | null {
+  if (!availStr) return null;
+
+  // Look for explicit quantity
+  const match = availStr.match(/\d+/);
+  if (match) return parseInt(match[0], 10);
+
+  const lowerStr = availStr.toLowerCase();
+
+  // Positive signals (pt/en)
+  if (
+    lowerStr.includes('em stock') ||
+    lowerStr.includes('disponivel') ||
+    lowerStr.includes('disponível') ||
+    lowerStr.includes('available') ||
+    lowerStr.includes('in stock')
+  ) {
+    return 1;
+  }
+
+  // Negative signals (pt/en)
+  if (
+    lowerStr.includes('esgotado') ||
+    lowerStr.includes('sem stock') ||
+    lowerStr.includes('indisponivel') ||
+    lowerStr.includes('indisponível') ||
+    lowerStr.includes('out of stock') ||
+    lowerStr.includes('unavailable')
+  ) {
+    return 0;
+  }
+
+  return null;
+}
+
+/**
+ * Extract absolute URL from href
+ */
+export function extractAbsoluteUrl(href: string | undefined, baseUrl: string): string {
+  if (!href) return '';
+
+  if (href.startsWith('http://') || href.startsWith('https://')) {
+    return href;
+  }
+
+  if (href.startsWith('//')) {
+    return 'https:' + href;
+  }
+
+  if (href.startsWith('/')) {
+    const url = new URL(baseUrl);
+    return `${url.protocol}//${url.host}${href}`;
+  }
+
+  return new URL(href, baseUrl).href;
+}
+
+function ensureMartexBaseUrl(baseUrl?: string): string {
+  if (baseUrl && /martextruck\.pl/i.test(baseUrl)) {
+    return baseUrl.replace(/\/$/, '');
+  }
+  return MARTEX_DEFAULT_BASE_URL;
+}
+
+function collapseWhitespace(value: string | undefined | null): string {
+  return (value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeDelivery(value: string | undefined | null): string | null {
+  const collapsed = collapseWhitespace(value);
+  if (!collapsed) return null;
+  const sanitized = collapsed.replace(/\b(Go further|Go\s*further|Dalej|Add to Cart|Do koszyka)\b/gi, '').trim();
+  return sanitized || null;
+}
+
+function matchFirst(text: string, patterns: RegExp[]): string | null {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return (match[1] || match[0] || '').trim();
+    }
+  }
+  return null;
+}
+
+function parseQuantityToken(raw: string | undefined | null): number | null {
+  if (!raw) return null;
+  const digits = raw.match(/\d+/);
+  if (!digits) return null;
+  const parsed = parseInt(digits[0], 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function sanitizeQuantityLabel(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const cleaned = raw
+    .replace(/\b(pcs|szt\.?|szt|pc)\b\.?/gi, '')
+    .replace(/\s+/g, '')
+    .trim();
+  return cleaned || null;
+}
+
+function parseMartexQuantity(raw: string | undefined | null) {
+  const label = sanitizeQuantityLabel(raw);
+  const qty = parseQuantityToken(raw);
+  const hasSymbol = typeof raw === 'string' && /[>+]/.test(raw);
+  const hasStock = qty !== null ? qty > 0 : Boolean(label && hasSymbol);
+  const isOut = qty !== null && qty === 0 && !hasSymbol;
+  return {
+    raw,
+    label,
+    qty,
+    hasStock,
+    isOut,
+  };
+}
+
+function extractQuantityFromClass(classAttr: string | undefined | null): number | null {
+  if (!classAttr) return null;
+  const explicit = classAttr.match(/quantity_(\d+)/);
+  if (explicit) {
+    const parsed = parseInt(explicit[1], 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  if (classAttr.includes('quantity_zero')) return 0;
+  if (classAttr.includes('quantity_above')) return 6;
+  if (classAttr.includes('quantity_available')) return 1;
+  return null;
+}
+
+function extractMartexAvailability(text: string, classAttr: string | undefined | null): { availability: number | null; summary: string | null } {
+  const summaryParts: string[] = [];
+  const centralRaw = matchFirst(text, [
+    /(?:central(?: warehouse)?|centrala)\s*[:\-]?\s*([>≤<\d\s]+(?:pcs|szt\.?)?)/i,
+  ]);
+  if (centralRaw) summaryParts.push(`Central: ${centralRaw}`);
+
+  const branchRaw = matchFirst(text, [
+    /(?:branches|oddzia[a-z\u0142]+)\s*[:\-]?\s*([>≤<\d\s]+(?:pcs|szt\.?)?)/i,
+  ]);
+  if (branchRaw) summaryParts.push(`Branches: ${branchRaw}`);
+
+  const totalRaw = matchFirst(text, [
+    /(?:available|dost(?:e|\u0119)pne)\s*[:\-]?\s*([>≤<\d\s]+(?:pcs|szt\.?)?)/i,
+  ]);
+
+  const centralQty = parseQuantityToken(centralRaw);
+  const branchQty = parseQuantityToken(branchRaw);
+  let availability: number | null = null;
+
+  if (centralQty !== null || branchQty !== null) {
+    availability = (centralQty ?? 0) + (branchQty ?? 0);
+  } else {
+    availability = parseQuantityToken(totalRaw);
+  }
+
+  if (availability === null) {
+    availability = extractQuantityFromClass(classAttr);
+  }
+
+  const summary = summaryParts.length ? summaryParts.join(' | ') : null;
+  return { availability, summary };
+}
+
+function extractMartexDetails($el: cheerio.Cheerio<any>): {
+  price: number | null;
+  availability: number | null;
+  availabilityLabel: string | null;
+  summary: string | null;
+} {
+  const priceCandidates = [
+    collapseWhitespace($el.find('.partscontrol-box-articles-price-net').first().text()),
+    collapseWhitespace($el.find('.partscontrol-box-articles-price-gross').first().text()),
+    collapseWhitespace($el.find('.partscontrol-box-articles-price-gross-cont').first().text())
+  ].filter(Boolean) as string[];
+
+  let price: number | null = null;
+  for (const candidate of priceCandidates) {
+    const cleanedCandidate = candidate.replace(/\b(pln|eur|zł|zl)\b/gi, '').trim();
+    if (/[A-Za-z]/.test(cleanedCandidate)) {
+      continue;
+    }
+    const parsed = parsePrice(candidate);
+    if (parsed !== null && parsed > 0 && parsed <= 10000) {
+      price = parsed;
+      break;
+    }
+  }
+
+  const centralRaw = collapseWhitespace($el.find('td.bc-MC .qua_no').first().text());
+  const branchRaw = collapseWhitespace($el.find('td[class*="bc-Kod"] .qua_no').first().text());
+
+  const centralInfo = parseMartexQuantity(centralRaw);
+  const branchInfo = parseMartexQuantity(branchRaw);
+
+  let availability: number | null = null;
+  let availabilityLabel: string | null = null;
+
+  if (centralInfo.hasStock) {
+    availability = centralInfo.qty !== null ? centralInfo.qty : branchInfo.qty;
+    availabilityLabel = centralInfo.label || (centralInfo.qty !== null ? String(centralInfo.qty) : null);
+  } else if (branchInfo.hasStock) {
+    availability = branchInfo.qty !== null ? branchInfo.qty : centralInfo.qty;
+    availabilityLabel = branchInfo.label || (branchInfo.qty !== null ? String(branchInfo.qty) : null);
+  } else if (centralInfo.qty !== null || branchInfo.qty !== null) {
+    const fallbackQty = centralInfo.qty ?? branchInfo.qty ?? 0;
+    availability = fallbackQty;
+    availabilityLabel = fallbackQty > 0 ? String(fallbackQty) : null;
+  }
+
+  const summaryParts: string[] = [];
+  if (centralRaw) summaryParts.push(`Central: ${centralRaw}`);
+  if (branchRaw) summaryParts.push(`Branches: ${branchRaw}`);
+  let summary = summaryParts.length ? summaryParts.join(' | ') : null;
+
+  if (price !== null && availability !== null) {
+    return { price, availability, availabilityLabel, summary };
+  }
+
+  const text = collapseWhitespace($el.text());
+  const fallback = extractMartexAvailability(text, $el.attr('class'));
+
+  if (summary === null) {
+    summary = fallback.summary;
+  } else if (fallback.summary) {
+    summary = `${summary} | ${fallback.summary}`;
+  }
+
+  if (price === null && priceCandidates.length === 0) {
+    const fallbackMatches = text.match(/([0-9]{1,3}(?:[.,\s][0-9]{3})*(?:[.,][0-9]{2}))/g) || [];
+    for (const token of fallbackMatches) {
+      const parsed = parsePrice(token);
+      if (parsed !== null && parsed > 0 && parsed <= 10000) {
+        price = parsed;
+        break;
+      }
+    }
+    if (price === null) {
+      const fallbackPrice = matchFirst(text, [
+        /(?:gross price|cena brutto|price after discount)\s*[:\-]?\s*([0-9><.,\s]+(?:eur|pln|z(?:\u0142|l)))/i,
+        /(?:net price|cena netto)\s*[:\-]?\s*([0-9><.,\s]+(?:eur|pln|z(?:\u0142|l)))/i,
+      ]);
+      const parsedFallback = parsePrice(fallbackPrice);
+      if (parsedFallback !== null && parsedFallback > 0 && parsedFallback <= 10000) {
+        price = parsedFallback;
+      }
+    }
+  }
+
+  const resolvedAvailability = availability ?? fallback.availability;
+  if (availabilityLabel === null && fallback.summary) {
+    const fallbackMatch = matchFirst(fallback.summary, [/(?:central|branches|available)\s*[:\-]?\s*([>+\d]+)/i]);
+    if (fallbackMatch) {
+      availabilityLabel = sanitizeQuantityLabel(fallbackMatch);
+    }
+  }
+
+  return {
+    price,
+    availability: resolvedAvailability,
+    availabilityLabel,
+    summary,
+  };
+}
+
+/**
+ * Parse HTML using supplier selectors
+ */
+function getSupplierSpecificSelectors(supplier: Supplier) {
+  // Seletores específicos para o Auger
+  if (supplier.name.toLowerCase().includes('auger')) {
+    return {
+      item: '.product-card, .product-item, tr.product, .search-result-item',
+      name: '.card-title, .product-name, .card-additionalTitle, td.description, .item-description',
+      code: '.card-text, .product-code, .product-number, td.reference, .item-reference',
+      price: '.result-price, .product-price, td.price, .item-price',
+      availability: '.product-stock-info__count, .stock-status, td.availability, .stock-info',
+      delivery: '.delivery-info, td.delivery, .delivery-estimate',
+      link: 'a[href*="product-detail"], a.product-link, td.description a, .item-link'
+    };
+  }
+  if (supplier.name.toLowerCase().includes('martex')) {
+    return {
+      item: '.partscontrol-box',
+      name: '.partscontrol-box-detail-link',
+      code: '.partscontrol-box-articles-articleid',
+      price: '.partscontrol-box-articles-price-net, .partscontrol-box-articles-price-gross',
+      availability: '.partscontrol-box-info',
+      delivery: '.partscontrol-box-articles-order',
+      link: '.partscontrol-box-detail-link'
+    };
+  }
+  return supplier.selectors.result_selectors;
+}
+
+export function parseHtml(
+  html: string,
+  supplier: Supplier
+): ProductItem[] {
+  const $ = cheerio.load(html);
+  let items: ProductItem[] = [];
+  const selectors = getSupplierSpecificSelectors(supplier);
+  const isMartex = supplier.name.toLowerCase().includes('martex');
+  const martexBaseUrl = isMartex ? ensureMartexBaseUrl(supplier.base_url) : supplier.base_url;
+
+  $(selectors.item).each((_, element) => {
+    const $el = $(element);
+
+    let nameText = selectors.name
+      ? (selectors.name === 'self' ? $el.text().trim() : $el.find(selectors.name).text().trim())
+      : '';
+    if (!nameText) {
+      nameText = $el.attr('data-name') || '';
+    }
+    if (!nameText) {
+      nameText = $el.find('a[href*="product-detail"]').first().text().trim();
+    }
+    const titleEl = $el.find('.card-title').first();
+    if (titleEl.length) {
+      const baseTitle = titleEl.clone().children().remove().end().text().trim();
+      const additionalTitle = titleEl.find('span').text().trim();
+      const combined = [baseTitle, additionalTitle].filter(Boolean).join(' ').trim();
+      if (combined) {
+        nameText = combined;
+      }
+    }
+    nameText = nameText.replace(/\s+/g, ' ').trim();
+
+    let codeText = selectors.code ? $el.find(selectors.code).text().trim() : null;
+    if (codeText && codeText.length === 0) codeText = null;
+    if (codeText) { codeText = codeText.replace(/\s+/g, '').trim(); }
+    if (!codeText) {
+      const maybeCode = $el.attr('data-sku')
+        || $el.find('.card-result-count, .product-results__shortlist li').first().text().trim();
+      codeText = maybeCode ? maybeCode : null;
+    }
+
+    const priceText = selectors.price ? $el.find(selectors.price).first().text().trim() : '';
+    let availText = selectors.availability ? $el.find(selectors.availability).first().text().trim() : null;
+    if (availText && availText.length === 0) availText = null;
+
+    const deliveryText = selectors.delivery ? normalizeDelivery($el.find(selectors.delivery).first().text()) : null;
+    const linkHref = selectors.link
+      ? (selectors.link === 'self' ? $el.attr('href') : $el.find(selectors.link).attr('href'))
+      : '';
+    const fallbackBase = martexBaseUrl || supplier.base_url || (isMartex ? MARTEX_DEFAULT_BASE_URL : '');
+    const absoluteUrl = fallbackBase ? extractAbsoluteUrl(linkHref, fallbackBase) : (linkHref || '');
+
+    if (!nameText) return; // Skip items without a name
+
+    const item: ProductItem = {
+      name: nameText,
+      code: codeText || null,
+      price: parsePrice(priceText),
+      availability: parseAvailability(availText),
+      delivery: deliveryText,
+      url: absoluteUrl,
+      store: supplier.name
+    };
+
+    if (isMartex) {
+      const martexDetails = extractMartexDetails($el);
+      if (martexDetails.price !== null) {
+        item.price = martexDetails.price;
+      }
+      if (martexDetails.availability !== null) {
+        item.availability = martexDetails.availability;
+      }
+      if (martexDetails.availabilityLabel) {
+        item.availability_label = martexDetails.availabilityLabel;
+      }
+      if (martexDetails.summary) {
+        item.stock_summary = martexDetails.summary;
+      }
+      if (item.delivery && item.delivery.toLowerCase().includes('central')) {
+        item.delivery = null;
+      }
+    }
+
+    items.push(item);
+  });
+  // Heuristic fallback for Auger: anchors linking to product-detail
+  if (items.length === 0 && supplier.name.toLowerCase().includes('auger')) {
+    $('a[href*="product-detail"]').each((_, el) => {
+      const $a = $(el);
+      const nameText = $a.text().trim();
+      if (!nameText) return;
+      const href = $a.attr('href');
+      items.push({
+        name: nameText,
+        code: null,
+        price: null,
+        availability: null,
+        delivery: null,
+        url: extractAbsoluteUrl(href, supplier.base_url),
+        store: supplier.name,
+      });
+    });
+  }
+
+  const uniqueItems: ProductItem[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const key = `${item.url}|${item.name}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueItems.push(item);
+    }
+  }
+
+  return uniqueItems;
+}
+
+/**
+ * Sort items: available first (by price ASC), then unavailable
+ */
+export function sortItems(items: ProductItem[]): ProductItem[] {
+  return items.sort((a, b) => {
+    const A = (a.availability ?? 0) > 0 ? 0 : 1;
+    const B = (b.availability ?? 0) > 0 ? 0 : 1;
+
+    if (A !== B) return A - B;
+
+    const ap = a.price ?? Number.POSITIVE_INFINITY;
+    const bp = b.price ?? Number.POSITIVE_INFINITY;
+
+    return ap - bp;
+  });
+}
+
+/**
+ * Detect if page contains robot/captcha blocking
+ */
+export function isBlockedByRobot(html: string): boolean {
+  const lowerHtml = html.toLowerCase();
+  const blockIndicators = [
+    'captcha',
+    'robot',
+    'access denied',
+    'forbidden',
+    'cloudflare',
+    'are you a robot',
+    'verify you are human'
+  ];
+
+  return blockIndicators.some(indicator => lowerHtml.includes(indicator));
+}
+

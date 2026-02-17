@@ -1,0 +1,44 @@
+{
+  "name": "ProductScout-Production",
+  "description": "Local agent config for running, testing and collecting evidence for ProductScout (backend + frontend).",
+  "ports": [3001, 3000],
+  "run": {
+    "backend": {
+      "cwd": "backend",
+      "start": "npm run dev",
+      "health": {
+        "url": "http://localhost:3001/health",
+        "timeoutMs": 10000
+      }
+    },
+    "frontend": {
+      "cwd": "frontend",
+      "start": "npm run dev",
+      "open": "http://localhost:3000"
+    }
+  },
+  "scripts": {
+    "killPorts": "scripts/windows/kill-ports.ps1",
+    "runAll": "scripts/windows/run-all.ps1",
+    "collectEvidence": "scripts/collect-evidence.js",
+    "analyzeSnapshot": "scripts/analyze-snapshot.js",
+    "testAuger": "test-auger.js"
+  },
+  "evidence": {
+    "logsDir": "logs",
+    "evidenceDir": "logs/evidence"
+  },
+  "supabase": {
+    "tables": [
+      "suppliers",
+      "supplier_credentials",
+      "search_runs"
+    ],
+    "storageBucket": "debug-snapshots"
+  },
+  "playwright": {
+    "enabledEnvVar": "ENABLE_PLAYWRIGHT_LOGIN",
+    "navTimeoutEnvVar": "PLAYWRIGHT_NAV_TIMEOUT_MS"
+  }
+}
+

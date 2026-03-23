@@ -5,6 +5,7 @@ import { getBrowser } from './playwright';
 import { logger } from '../utils/logger';
 import { loadSessionCache, saveSessionCache, clearSessionCache } from '../utils/session-cache';
 import { withRetry } from '../utils/retry-helper';
+import { getSupplierKey, getSupplierSessionCacheKey } from '../utils/supplier-utils';
 
 const USERNAME_SELECTORS = [
   'input[name="usuario"]',
@@ -72,7 +73,7 @@ async function dismissCookies(page: import('playwright').Page): Promise<void> {
 
 export class CasalsProvider implements SupplierProvider {
   supports(supplier: Supplier): boolean {
-    return supplier.name.toLowerCase().includes('casals') || supplier.base_url?.includes('evoparts');
+    return getSupplierKey(supplier) === 'casals';
   }
 
   async loginAndFetch(
@@ -82,7 +83,7 @@ export class CasalsProvider implements SupplierProvider {
     timeoutMs: number = parseInt(process.env.PLAYWRIGHT_NAV_TIMEOUT_MS || '25000', 10)
   ): Promise<ProviderFetchResult> {
     const result: ProviderFetchResult = { html: '', status: 500 };
-    const cacheKey = `casals-${supplier.id || supplier.name || 'default'}`;
+    const cacheKey = getSupplierSessionCacheKey(supplier);
 
     const browser = await getBrowser();
     let context: Awaited<ReturnType<typeof browser.newContext>> | undefined;
@@ -107,7 +108,7 @@ export class CasalsProvider implements SupplierProvider {
 
       // Quick session check
       try {
-        await page.goto(supplier.base_url || 'https://evoparts.pt', { waitUntil: 'domcontentloaded' });
+        await page.goto(supplier.base_url || 'https://pedidos.casalsmd.com', { waitUntil: 'domcontentloaded' });
         await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
         const loginLink = await page.locator('a[href*="/login"]').count().catch(() => 0);
         const logoutLink = await page.locator('a[href*="/logout"], a:has-text("Logout"), a:has-text("Sair")').count().catch(() => 0);
@@ -164,14 +165,39 @@ export class CasalsProvider implements SupplierProvider {
       const targetUrl = searchUrl || supplier.search_url_template?.replace('{query}', '') || (supplier.base_url || 'https://pedidos.casalsmd.com');
       const base = supplier.base_url || 'https://pedidos.casalsmd.com';
 
-      const runSearch = async (codeValue: string, descValue: string): Promise<number> => {
-        await withRetry(
-          () => page.goto(`${base.replace(/\/$/, '')}/articulos.php`, { waitUntil: 'domcontentloaded', timeout: timeoutMs }),
-          { context: 'Casals articulos navigation', maxRetries: 1 }
-        ).catch(() => {});
-        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-        await dismissCookies(page);
-        await page.waitForTimeout(500);
+      let queryValue = '';
+      try {
+        const parsed = new URL(searchUrl || targetUrl);
+        queryValue = parsed.searchParams.get('q') || parsed.searchParams.get('search') || '';
+      } catch {
+        const parts = (searchUrl || '').split('=');
+        queryValue = parts.length > 1 ? parts.pop() || '' : (searchUrl || '');
+      }
+      if (queryValue) {
+        try { queryValue = decodeURIComponent(queryValue); } catch {}
+      }
+
+      // Navigate to search page once, then submit the form directly for retries
+      // (avoids a second full round-trip navigation when the first search returns 0 results)
+      await withRetry(
+        () => page.goto(`${base.replace(/\/$/, '')}/articulos.php`, { waitUntil: 'domcontentloaded', timeout: timeoutMs }),
+        { context: 'Casals articulos navigation', maxRetries: 1 }
+      ).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+      await dismissCookies(page);
+      await page.waitForTimeout(300);
+
+      const submitForm = async (codeValue: string, descValue: string): Promise<number> => {
+        // If the search form is no longer on the page (e.g. we're on results page),
+        // navigate back to articulos.php first.
+        const formPresent = await page.locator('#codigo, #descripcion').count().catch(() => 0);
+        if (!formPresent) {
+          await withRetry(
+            () => page.goto(`${base.replace(/\/$/, '')}/articulos.php`, { waitUntil: 'domcontentloaded', timeout: timeoutMs }),
+            { context: 'Casals articulos re-navigation', maxRetries: 1 }
+          ).catch(() => {});
+          await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
+        }
         const codeInput = page.locator('#codigo').first();
         const descInput = page.locator('#descripcion').first();
         const submitBtn = page.locator('button[type="submit"]').first();
@@ -186,26 +212,15 @@ export class CasalsProvider implements SupplierProvider {
         } else {
           await page.keyboard.press('Enter').catch(() => {});
         }
-        await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
-        await page.waitForTimeout(1200);
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(600);
         return await page.locator('table.table tbody tr').count().catch(() => 0);
       };
 
-      let queryValue = '';
-      try {
-        const parsed = new URL(searchUrl || targetUrl);
-        queryValue = parsed.searchParams.get('q') || parsed.searchParams.get('search') || '';
-      } catch {
-        const parts = (searchUrl || '').split('=');
-        queryValue = parts.length > 1 ? parts.pop() || '' : (searchUrl || '');
-      }
-      if (queryValue) {
-        try { queryValue = decodeURIComponent(queryValue); } catch {}
-      }
-
-      let rows = await runSearch(queryValue, '');
+      let rows = await submitForm(queryValue, '');
       if (rows === 0 && queryValue) {
-        rows = await runSearch('', queryValue);
+        // Try again with description field
+        rows = await submitForm('', queryValue);
       }
 
       result.html = await page.content();

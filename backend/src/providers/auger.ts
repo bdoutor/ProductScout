@@ -5,6 +5,7 @@ import { getBrowser } from './playwright';
 import { logger } from '../utils/logger';
 import { loadSessionCache, saveSessionCache, clearSessionCache } from '../utils/session-cache';
 import { withRetry } from '../utils/retry-helper';
+import { getSupplierKey, getSupplierSessionCacheKey } from '../utils/supplier-utils';
 
 const PLAYWRIGHT_LOGIN_ENABLED = (): boolean =>
   process.env.ENABLE_PLAYWRIGHT_LOGIN === '1' ||
@@ -42,7 +43,7 @@ async function findLocator(page: import('playwright').Page, selectors: string[])
 
 export class AugerProvider implements SupplierProvider {
   supports(supplier: Supplier): boolean {
-    const supported = supplier.name.toLowerCase().includes('auger');
+    const supported = getSupplierKey(supplier) === 'auger';
     logger.debug('[AugerProvider] checking support for %s => %s', supplier.name, supported);
     return supported;
   }
@@ -54,7 +55,7 @@ export class AugerProvider implements SupplierProvider {
     timeoutMs: number = parseInt(process.env.PLAYWRIGHT_NAV_TIMEOUT_MS || '25000', 10)
   ): Promise<ProviderFetchResult> {
     const result: ProviderFetchResult = { html: '', status: 500 };
-    const cacheKey = String(supplier.id || supplier.name || 'auger');
+    const cacheKey = getSupplierSessionCacheKey(supplier);
 
     if (!PLAYWRIGHT_LOGIN_ENABLED()) {
       logger.warn('[AugerProvider] Playwright login disabled via env flag');
@@ -86,7 +87,7 @@ export class AugerProvider implements SupplierProvider {
         (supplier as any).login_url || credential.url || supplier.base_url || 'https://portal.iamauger.com/login';
 
       const navigateToSearch = async () => {
-        await page.goto(searchUrl, { waitUntil: 'networkidle' });
+        await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
       };
 
       const isLoginPage = async (): Promise<boolean> => {

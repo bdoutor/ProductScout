@@ -1,0 +1,65 @@
+{
+  "timestamp": 1774292241601,
+  "cookies": [
+    {
+      "name": "cookieConsent",
+      "value": "accepted",
+      "domain": "b2b.rymeautomotive.com",
+      "path": "/",
+      "expires": 1805825634,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga",
+      "value": "GA1.1.232944897.1774289635",
+      "domain": ".rymeautomotive.com",
+      "path": "/",
+      "expires": 1808852234.865616,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "PHPSESSID",
+      "value": "7mg0q8h0p0jij4brf3j0g31553",
+      "domain": "apib2b.rymeautomotive.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_identity",
+      "value": "74fd9056c21361e13586f668fdb11c66fc05da02d8a8b2553ecc439d2871ec91a%3A2%3A%7Bi%3A0%3Bs%3A9%3A%22_identity%22%3Bi%3A1%3Bs%3A48%3A%22%5B518%2C%22f3SlIYU9iQMsUsvIoR-LAa7CeNNqFOud%22%2C1209600%5D%22%3B%7D",
+      "domain": "apib2b.rymeautomotive.com",
+      "path": "/",
+      "expires": 1775501834.941729,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_csrf",
+      "value": "54945e4cd49625b08624488ef29926d9a83f46af375df53a07b5d3613bd5a9a9a%3A2%3A%7Bi%3A0%3Bs%3A5%3A%22_csrf%22%3Bi%3A1%3Bs%3A32%3A%225IGgvyJ4WrRG1iZmlWlERjdwkjB0nfmP%22%3B%7D",
+      "domain": "apib2b.rymeautomotive.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga_RP8C2DBP7V",
+      "value": "GS2.1.s1774292117$o2$g1$t1774292234$j57$l0$h221243503",
+      "domain": ".rymeautomotive.com",
+      "path": "/",
+      "expires": 1808852234.884338,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ]
+}

@@ -8,9 +8,9 @@ function nextBin() {
 }
 
 const args = ['dev'];
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || '3000';
 const HOST = process.env.HOST || 'localhost';
-if (PORT && /^\d+$/.test(String(PORT))) {
+if (/^\d+$/.test(String(PORT))) {
   args.push('-p', String(PORT));
 }
 if (HOST) {

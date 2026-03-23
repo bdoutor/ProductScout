@@ -1,9 +1,12 @@
 import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
 import '@/styles/globals.css';
 
+const inter = Inter({ subsets: ['latin', 'latin-ext'] });
+
 export const metadata: Metadata = {
-  title: 'ProductScout',
-  description: 'Universal automotive parts lookup & comparison (multi-supplier, with authentication)',
+  title: 'ProductScout — Eurocomponentes',
+  description: 'Pesquisa e comparação de peças automóveis em múltiplos fornecedores',
 };
 
 export default function RootLayout({
@@ -12,8 +15,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="pt">
+      <body className={inter.className}>{children}</body>
     </html>
   );
 }

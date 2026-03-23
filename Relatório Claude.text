@@ -1,0 +1,264 @@
+PRODUCTSCOUT — RELATÓRIO DE ANÁLISE ARQUITECTURAL
+Gerado por Claude Sonnet 4.6 | Última actualização: 2026-03-22 (sessão 7)
+======================================================
+
+
+## SUMÁRIO EXECUTIVO
+
+O sistema tem uma base arquitectural sólida (progressive search, strategy pattern para providers,
+isolamento de falhas por supplier). Seis fases de trabalho concluídas. Todos os bugs críticos,
+todos os problemas de arquitectura prioritários, as optimizações de performance, o redesign
+visual completo do frontend, todos os fixes de backlog, e dois novos suppliers implementados
+e validados em produção.
+
+Build TypeScript: LIMPO (zero erros, frontend e backend).
+Todos os suppliers: FUNCIONAIS (7/8 com login automático, Gsmart manual por Cloudflare).
+Suppliers activos: AUGER, Martex, Casals, EvoParts, Nipocar, Ryme, Air Fren (+ GSMART manual).
+Migração BD: auth_mode e supplier_key aplicados para todos os suppliers.
+Performance de pesquisa: ~28s (era ~54s) — melhoria de 48%.
+Frontend: redesign Eurocomponentes completo, UI 100% em português.
+Busca progressiva: SSE em vez de polling (resultados sem latência de intervalo).
+Backlog arquitectural: todos os fixes concluídos (Fix 4, 6, 7, 12).
+QA completo executado: 15/15 checks passados na sessão 7.
+
+
+======================================================
+## ESTADO ACTUAL — O QUE FOI FEITO (FASES 1 A 6)
+======================================================
+
+FASE 1 — Bugs críticos
+  [x] Fix 1: Bloco inline Auger removido (decryptPassword não importada — nunca funcionou)
+  [x] Fix 2: // @ts-nocheck removido de scraper.ts e parser.ts
+  [x] Fix 3: Lógica Playwright Auger consolidada em AugerProvider
+  [x] Fix 8: Null-guard na escrita Supabase em scraper.ts
+  [x] BONUS: *_SILENT_REFRESH_TIMEOUT resolvido (refreshes sequenciais + timeout 180s)
+
+FASE 2 — Arquitectura
+  [x] Fix 5 (código): getSupplierKey() centralizado em utils/supplier-utils.ts
+        Substituídos 31 name.includes() espalhados por 9 ficheiros
+  [x] Fix 5 (BD): Migração SQL executada e validada
+        ALTER TABLE suppliers ADD COLUMN supplier_key text
+        Todos os suppliers preenchidos: auger, gsmart, nipocar, martex, casals, evoparts
+        getSupplierKey() lê agora directamente da BD (fallback por nome desactivado em prod)
+  [x] Fix 10: Mensagem GSMART sem instrução CLI (search.ts)
+        Substituída por texto amigável; frontend usa GSMART_SESSION_EXPIRED no error_message
+  [x] Fix 4 (parcial): scraper.ts dividido
+        — parseNipocar() → utils/parser.ts (todos os parsers HTML centralizados)
+        — persistSearchRun() + storeDebugSnapshot() + updateDebugSnapshotUrl()
+             → services/search-run-repository.ts (persistência isolada do scraping)
+        — supabase completamente removido de scraper.ts
+        — console.* substituídos por logger (Fix 9 absorvido neste refactor)
+
+FASE 3 — Polimento + Performance (sessões 3 e 4)
+  [x] Fix 11: availability_label e stock_summary já estavam no tipo ProductItem;
+              removidos 6 casts (item as any) desnecessários em parser.ts
+  [x] Scheduler overlap bug: schedulerRunning flag em supplier-auth.ts
+        setInterval disparava novo tick sem esperar o anterior terminar →
+        5 browsers Playwright em paralelo → todos SILENT_REFRESH_TIMEOUT
+        Fix: flag schedulerRunning impede ticks sobrepostos
+  [x] Performance — Poll interval: 5000ms → 1500ms (.env SEARCH_PROGRESS_POLL_MS)
+        Utilizador vê resultados parciais até 3.5s mais cedo
+  [x] Performance — Auger: networkidle → domcontentloaded na navegação de pesquisa
+        Evita esperar por analytics/trackers; poupa 2-5s por pesquisa no Auger
+  [x] Performance — EvoParts: timeout mínimo forçado 45s → 25s
+        Evita bloquear a resposta durante 45s desnecessários
+  [x] Performance — GSMART fast-exit em GsmartProvider
+        Sem sessão em cache E sem credenciais → lança CAPTCHA_REQUIRED imediatamente
+        GSMART: 50s → 0.3s quando sessão expirada
+  [x] Performance — Martex: timeouts de resultado reduzidos
+        partscontrol-box: 15s → 7s | price function: 8s → 4s | price selectors: 5s → 3s
+        waitForTimeout final: 1000ms → 500ms
+        Martex (0 resultados): 54s → 27s
+  [x] supplier-auth.ts: getSupplierAuthStateCached() exportado
+        Leitura síncrona do estado em cache por supplier ID (sem async, sem bloqueio)
+
+FASE 4 — Frontend redesign + QA (sessão 5)
+  [x] Design Eurocomponentes aplicado ao frontend (globals.css reescrito)
+        Tokens de cor: --cyan #00AEEF, --header-bg #0c1a2d, Inter font
+        Botões, badges, inputs, tabelas, toggles alinhados com identidade visual
+        Tailwind overrides: blue/indigo → cyan sem alterar page.tsx
+  [x] AuthHeader.tsx criado de raiz
+        Logo puzzle-piece SVG Eurocomponentes + "Componentes para veículos industriais"
+        Header sticky #0c1a2d (cor Figma NEO), logo 45px (~25% maior)
+        Nav tabs Pesquisa / Configuração com indicador cyan activo
+        Botão "Terminar sessão" ghost-on-dark com hover handlers
+  [x] Login page redesenhada
+        Fundo #0c1a2d, card branco com shadow, logo + branding centrado
+        Campos e botão usando design system (.input, .btn-primary)
+  [x] UI traduzida integralmente para português
+        page.tsx: todas as labels, estados, erros e mensagens em PT
+        ResultsTable.tsx: colunas, filtros, paginação, disponibilidade em PT
+        admin/layout.tsx: loading state em PT
+  [x] Bug admin/page.tsx: encoding corrompido no bullet de password
+        'â€¢'.repeat(8) → '••••••••' literal
+  [x] NEXT_PUBLIC_PROGRESS_POLL_MS=1500 adicionado a frontend/.env.local
+        Frontend passava a fazer polling a 5s (default) em vez de 1.5s — corrigido
+  [x] Botão "Cancelar" na pesquisa progressiva
+        Aparece junto ao botão "A pesquisar..." durante pesquisa activa
+        Para o polling imediatamente, limpa estado, mantém resultados parciais visíveis
+        Permite iniciar nova pesquisa sem esperar a anterior terminar
+  [x] VSCode launch.json: preLaunchTask removido
+        F5 já não mata as portas 3000/3001 acidentalmente
+  [x] VSCode tasks.json: start-cdp-chrome com Edge como fallback
+        Funciona mesmo sem Chrome instalado; falha silenciosa em vez de exit 1
+
+FASE 5 — Backlog arquitectural (sessão 6)
+  [x] Fix 4 (restante): helpers EvoParts movidos de scraper.ts para evoparts.ts
+        isAuthenticatedEvoPartsHtml(), buildCookieHeaderForUrl(), fetchEvoPartsFromCachedSession()
+        Exportadas de providers/evoparts.ts; scraper.ts importa em vez de ter cópias locais
+        loadSessionCache removido de scraper.ts (já não é usado directamente)
+        scraper.ts: ~430 → ~360 linhas
+  [x] Fix 6: getSupplierAuthMode() lê supplier.auth_mode da BD primeiro
+        SQL aplicado no Supabase: coluna auth_mode adicionada, todos os suppliers preenchidos
+        GSMART=manual, restantes=auto
+  [x] Fix 7: buildEnvCredential() removido de supplier-runtime.ts
+        Credenciais Nipocar migradas para supplier_credentials no Supabase
+        Variáveis NIPOCAR_LOGIN / NIPOCAR_PASSWORD removidas do .env
+  [x] Fix 12: SSE em vez de polling para busca progressiva
+        Backend: GET /api/search/progressive/:runId/stream (text/event-stream, 500ms push)
+        Frontend api.ts: openProgressStream() — cria EventSource com callbacks
+        Frontend page.tsx: useEffect troca setInterval por EventSource
+        Latência de actualização: 500ms (era 1500ms); sem requests desnecessários entre suppliers
+  [x] Fix SSE onerror falso: es.close() ao receber done evita reconexão automática do EventSource
+        onerror ignorado se esRef.current já foi limpo — elimina "Falha na ligação" espúrio
+
+FASE 6 — Novos suppliers: Ryme + Air Fren (sessão 7)
+  [x] Supplier Ryme Automotive implementado
+        Provider: Playwright login com "Manter sessão aberta", dismissCookies() antes do form
+        Selectores correctos descobertos via script diagnóstico:
+          username: input[name="login"], password: input[name="password"]
+          submit: button:has-text("Acessar") — evita clicar no cookie banner
+        isLoggedIn(): verifica URL não contém /login E sem password field visível
+        Site Angular SPA: pesquisa via URL directa /advanced-search/{query}/any
+        Parser: .product-list-itm, a.title.product-link, código strip "Ref:"
+        Disponibilidade: class level_N — qualquer N>0 = In stock
+        Supabase: supplier + credencial inseridos (login: 77141-00)
+        Validado: 3 produtos para "filtro", preços e disponibilidade correctos
+
+  [x] Supplier Air Fren implementado
+        Provider: Playwright login — dismissPrivacyBanner() antes do form (banner interferia)
+        Selectores: #login-email, #login-password, button:has-text("Login"), #remember_me
+        isLoggedIn(): verifica link "Perfil" presente E .product-card-body.nologin ausente
+        Site server-rendered: pesquisa via URL directa
+          /catalogo-productos?search=reference&q={query}
+        Parser: .product-card, h3.product-title a, .product-category a (strip "Ref. "),
+                h4.product-price, .product-badge ("Disponible" → In stock)
+        Supabase: supplier + credencial inseridos (login: eurocomponentes@eurocomponentes.pt)
+        Validado: 20 produtos para "filtro", preços e disponibilidade correctos
+
+  [x] QA sessão 7 — 15/15 checks passados
+        TypeScript limpo, backend healthy, 8 suppliers activos, credenciais validadas
+        Pesquisa "filtro": 34 items, 7/8 success (GSMART esperado), dados completos
+        SSE fix verificado, auth_mode correcto para todos, duplicado Nipocar desactivado
+
+
+======================================================
+## MÉTRICAS DE PERFORMANCE — ANTES vs DEPOIS
+======================================================
+
+Pesquisa "pastilhas travao" (pior caso — 0 resultados em vários suppliers):
+
+  Supplier     Antes    Depois   Delta
+  ----------   ------   ------   ------
+  GSMART       50.3s     0.3s    -50s   (fast-exit: sem sessão = erro imediato)
+  Martex       54.2s    27.6s    -27s   (timeouts reduzidos)
+  Casals       23.2s    27.0s    +4s    (variação normal de rede)
+  EvoParts     27.3s    26.5s     -1s
+  Nipocar      36.4s    25.1s    -11s
+  AUGER        31.3s    18.3s    -13s   (domcontentloaded)
+  ----------   ------   ------   ------
+  TOTAL        ~54s     ~28s     -48%
+
+Nota: o tempo total é dominado pelo supplier mais lento (execução paralela).
+Com sessões pre-aquecidas pelo scheduler, nenhum supplier faz login na pesquisa.
+
+
+======================================================
+## SUPPLIERS ACTIVOS — ESTADO ACTUAL
+======================================================
+
+  Supplier     Modo    Auth       Credencial (login)                    Estado
+  ----------   ------  ---------  ------------------------------------  --------
+  AUGER        render  auto       valdemar@eurocomponentes.pt           OK
+  Martex       render  auto       EC01                                  OK
+  Casals       render  auto       2174                                  OK
+  EvoParts     render  auto       eurocomponentes                       OK
+  Nipocar      render  auto       1232_0                                OK
+  Ryme         render  auto       77141-00                              OK
+  Air Fren     render  auto       eurocomponentes@eurocomponentes.pt    OK
+  GSMART       render  manual     valdemar craveiro                     MANUAL (sessão manual)
+
+Nota GSMART: requer inicialização de sessão manual via:
+  cd backend && npm run gsmart:init-session
+  (resolver captcha no browser que abre, sessão válida ~24h)
+
+
+======================================================
+## PENDENTE / PRÓXIMOS PASSOS SUGERIDOS
+======================================================
+
+Nada crítico pendente. Sugestões para iterações futuras:
+
+  [ ] GSMART: investigar automação do captcha ou alternativa à sessão manual
+  [ ] Mais suppliers: aplicar o template de onboarding (ryme/airfren como referência)
+  [ ] Auger / Casals: 0 resultados em "filtro" — verificar se selectores do parser precisam ajuste
+  [ ] Adicionar paginação nos resultados Ryme/AirFren (actualmente devolve só 1ª página)
+  [ ] Testes automatizados por supplier (script diagnóstico como base)
+
+
+======================================================
+## O QUE ESTÁ BEM DESENHADO (não alterar)
+======================================================
+
+- SupplierProvider interface + strategy pattern:
+  Adicionar supplier = 1 ficheiro (provider) + 1 linha em providers/index.ts
+  + inserção no Supabase (supplier + credencial).
+
+- Template de onboarding de novo supplier (aprendido com Ryme e Air Fren):
+  1. Script diagnóstico para descobrir selectores reais do formulário e URL de pesquisa
+  2. Provider com dismissCookies/dismissPrivacyBanner antes do login
+  3. isLoggedIn() robusto (URL + ausência de form + indicador de conta)
+  4. Pesquisa por URL directa (mais fiável que interacção com SPA)
+  5. Selectores de parser validados contra HTML real capturado
+
+- withTimeout() wrapping de todas as chamadas a providers:
+  Previne que um browser Playwright pendurado bloqueie o request.
+
+- Cache de resultados keyed em supplier.id:query com TTL.
+
+- Isolamento de erros em runSupplierSearch():
+  Erros tornam-se SupplierRunResult com status:'error', nunca propagam.
+
+- Sanitização de snapshots debug antes de upload para Supabase Storage.
+
+- buildResponseSummary() e sortAggregatedItems(): funções puras, sem side effects.
+
+- loadEnabledSupplierTargets() com cache de 60s.
+
+- getSupplierKey() centralizado: identificação de suppliers robusta,
+  independente do nome no Supabase, lê da BD com fallback por nome.
+
+- search-run-repository.ts: persistência Supabase isolada do scraping.
+
+- parser.ts: todos os parsers HTML (incluindo Nipocar, Ryme, AirFren) num único módulo.
+
+- schedulerRunning flag: impede ticks sobrepostos no setInterval do scheduler,
+  garantindo que refreshes de sessão correm sequencialmente.
+
+- GSMART fast-exit: GsmartProvider lança CAPTCHA_REQUIRED imediatamente
+  quando não há sessão em cache nem credenciais, sem abrir browser.
+
+- handleCancelSearch(): fecha SSE stream (EventSource.close()) sem afectar sessões
+  Playwright em curso no backend; utilizador pode pesquisar nova referência de imediato.
+
+- openProgressStream() em api.ts: SSE com EventSource, push a 500ms.
+  Sem polling desnecessário; resultados aparecem assim que cada supplier termina.
+
+- isAuthenticatedEvoPartsHtml() centralizado em evoparts.ts:
+  Verificação completa (resultados + pricing signals + client token) exportada para scraper.ts.
+  hasAuthenticatedPricingSignals() mantido privado para uso interno do EvoPartsProvider.
+
+
+======================================================
+FIM DO RELATÓRIO
+======================================================

@@ -5,6 +5,7 @@ import { getBrowser } from './playwright';
 import { logger } from '../utils/logger';
 import { loadSessionCache, saveSessionCache, clearSessionCache } from '../utils/session-cache';
 import { withRetry } from '../utils/retry-helper';
+import { getSupplierKey, getSupplierSessionCacheKey } from '../utils/supplier-utils';
 
 const DEFAULT_BASE_URL = 'https://eurocomp.gsmart.eu';
 
@@ -33,6 +34,8 @@ const SUBMIT_SELECTORS = [
 
 const SEARCH_INPUT_SELECTORS = [
   '#producto-busqueda-js',
+  'input[placeholder*="Refer"]',
+  'input[aria-label*="Refer"]',
   'input[name="buscar_codigo"]',
   'input[name="codigo"]',
   'input[name="q"]',
@@ -98,6 +101,11 @@ function normalizeUrl(url: string | null | undefined, baseUrl: string): string {
   } catch {
     return baseUrl;
   }
+}
+
+function normalizeOptionalUrl(url: string | null | undefined, baseUrl: string): string | null {
+  if (!url || !String(url).trim()) return null;
+  return normalizeUrl(url, baseUrl);
 }
 
 async function findLocator(page: import('playwright').Page, selectors: string[]): Promise<{ selector: string; locator: Locator } | null> {
@@ -171,6 +179,44 @@ async function waitForTurnstileToken(page: import('playwright').Page): Promise<v
   }
 }
 
+async function hasTurnstile(page: import('playwright').Page): Promise<boolean> {
+  const iframeCount = await page.locator('iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]').count().catch(() => 0);
+  const widgetCount = await page.locator('.cf-turnstile, [name="cf-turnstile-response"]').count().catch(() => 0);
+  return iframeCount > 0 || widgetCount > 0;
+}
+
+async function waitForTurnstileTokenWithTimeout(page: import('playwright').Page, timeoutMs: number): Promise<boolean> {
+  try {
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLInputElement>('input[name="cf-turnstile-response"]');
+      return Boolean(input && input.value && input.value.length > 10);
+    }, { timeout: timeoutMs });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isAuthenticatedPage(page: import('playwright').Page): Promise<boolean> {
+  const searchInput = await findLocator(page, SEARCH_INPUT_SELECTORS);
+  if (searchInput) return true;
+
+  const loginFormCount = await page
+    .locator('#UsuarioLoginForm, form[action*="usuarios/login"], input[name="data[Usuario][password]"]')
+    .count()
+    .catch(() => 0);
+  if (loginFormCount > 0) return false;
+
+  const logoutHints = await page
+    .locator(
+      'a[href*="/logout"], a[href*="/usuarios/salir"], a[href*="/usuarios/logout"], a:has-text("Salir"), a:has-text("Sair"), a:has-text("Cerrar sesión"), a:has-text("Logout"), a:has-text("Terminar sessão")'
+    )
+    .count()
+    .catch(() => 0);
+
+  return logoutHints > 0;
+}
+
 async function waitForResults(page: import('playwright').Page): Promise<void> {
   for (const selector of RESULT_HINT_SELECTORS) {
     try {
@@ -184,6 +230,31 @@ async function waitForResults(page: import('playwright').Page): Promise<void> {
       // try next selector
     }
   }
+}
+
+async function navigateToSearchHub(
+  page: import('playwright').Page,
+  candidates: string[]
+): Promise<boolean> {
+  for (const candidate of candidates) {
+    try {
+      await withRetry(
+        () => page.goto(candidate, { waitUntil: 'domcontentloaded', timeout: 20000 }),
+        { context: `Gsmart search hub navigation (${candidate})`, maxRetries: 2 }
+      );
+      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+      await dismissCookieBanner(page);
+      await page.waitForTimeout(600);
+      const quickSearch = await findLocator(page, SEARCH_INPUT_SELECTORS);
+      if (quickSearch) {
+        return true;
+      }
+    } catch (navErr) {
+      logger.warn('[GsmartProvider] navigation to %s failed: %s', candidate, navErr instanceof Error ? navErr.message : String(navErr));
+    }
+  }
+
+  return false;
 }
 
 function extractQueryValue(candidate: string | null | undefined): string | null {
@@ -270,15 +341,19 @@ async function ensureLoggedIn(
   for (const url of loginUrls) {
     try {
       await withRetry(
-        () => page.goto(url, { waitUntil: 'domcontentloaded' }),
+        () => page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }),
         { context: `Gsmart login navigation (${url})`, maxRetries: 3 }
       );
-      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
       await page.waitForTimeout(400);
       await dismissCookieBanner(page);
 
       if (!(await isLoginPage(page))) {
-        return;
+        if (await isAuthenticatedPage(page)) {
+          return;
+        }
+        lastIssue = `missing login/auth markers at ${url}`;
+        continue;
       }
 
       const username = await findLocator(page, USERNAME_SELECTORS);
@@ -290,7 +365,22 @@ async function ensureLoggedIn(
         continue;
       }
 
-      await waitForTurnstileToken(page);
+      if (await hasTurnstile(page)) {
+        const manualMode =
+          process.env.PLAYWRIGHT_HEADLESS === '0' ||
+          process.env.PLAYWRIGHT_HEADLESS === 'false';
+        const turnstileTimeout = manualMode ? 120000 : 15000;
+        const tokenReady = await waitForTurnstileTokenWithTimeout(page, turnstileTimeout);
+        if (!tokenReady) {
+          const captchaMessage = manualMode
+            ? 'CAPTCHA_REQUIRED: Cloudflare Turnstile not solved in time'
+            : 'CAPTCHA_REQUIRED: Cloudflare Turnstile blocks headless login (set PLAYWRIGHT_HEADLESS=false and solve challenge manually)';
+          logger.warn('[GsmartProvider] %s', captchaMessage);
+          throw new Error(captchaMessage);
+        }
+      } else {
+        await waitForTurnstileToken(page);
+      }
 
       await withRetry(async () => {
         await username.locator.fill('');
@@ -325,6 +415,9 @@ async function ensureLoggedIn(
     } catch (err) {
       lastIssue = err instanceof Error ? err.message : String(err);
       logger.warn('[GsmartProvider] login attempt failed (%s): %s', url, lastIssue);
+      if (lastIssue.startsWith('CAPTCHA_REQUIRED:')) {
+        throw new Error(lastIssue);
+      }
     }
   }
 
@@ -333,9 +426,7 @@ async function ensureLoggedIn(
 
 export class GsmartProvider implements SupplierProvider {
   supports(supplier: Supplier): boolean {
-    const name = supplier.name?.toLowerCase() || '';
-    const base = supplier.base_url?.toLowerCase() || '';
-    return name.includes('gsmart') || base.includes('gsmart.eu');
+    return getSupplierKey(supplier) === 'gsmart';
   }
 
   async loginAndFetch(
@@ -346,56 +437,63 @@ export class GsmartProvider implements SupplierProvider {
   ): Promise<ProviderFetchResult> {
     const result: ProviderFetchResult = { html: '', status: 500 };
 
-    if (!credential?.login || !credential?.password) {
-      result.error = new Error('Missing GSMART credentials');
-      return result;
-    }
-
     const baseUrl = normalizeBaseUrl(supplier.base_url);
     const normalizedSearchUrl = normalizeUrl(searchUrl, baseUrl);
     const queryValue = extractQueryValue(normalizedSearchUrl) || extractQueryValue(searchUrl);
     const loginCandidates = unique([
-      normalizeUrl((supplier as any).login_url, baseUrl),
-      normalizeUrl(credential.url, baseUrl),
+      normalizeOptionalUrl((supplier as any).login_url, baseUrl),
+      normalizeOptionalUrl((credential as any)?.url, baseUrl),
       `${baseUrl}/usuarios/login`,
       `${baseUrl}/usuarios/log`,
       `${baseUrl}/usuarios/logon`,
       baseUrl
     ]);
     const searchCandidates = buildSearchCandidates(normalizedSearchUrl, baseUrl, queryValue);
-    const cacheKey = `gsmart-${supplier.id || supplier.name || 'default'}`;
+    const cacheKey = getSupplierSessionCacheKey(supplier);
 
     const browser = await getBrowser();
     let context: Awaited<ReturnType<typeof browser.newContext>> | null = null;
     let page: Awaited<ReturnType<typeof browser.newPage>> | null = null;
+    let ownsContext = true;
 
     try {
       const cachedCookies = loadSessionCache(cacheKey);
-      context = await browser.newContext({
-        ignoreHTTPSErrors: true,
-        viewport: { width: 1366, height: 860 },
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        extraHTTPHeaders: {
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-          'Accept-Language': 'pt-PT,pt;q=0.9,en;q=0.8,es;q=0.7'
-        },
-        storageState: cachedCookies ? { cookies: cachedCookies } : undefined,
-      });
+      const hasCachedCookies = Array.isArray(cachedCookies) && cachedCookies.length > 0;
+
+      // Fast-exit: no cached session and no credentials → manual login required, skip Playwright entirely
+      if (!hasCachedCookies && (!credential?.login || !credential?.password)) {
+        throw new Error('CAPTCHA_REQUIRED: No GSMART session cache and no credentials — manual login required');
+      }
+
+      try {
+        context = await browser.newContext({
+          ignoreHTTPSErrors: true,
+          viewport: { width: 1366, height: 860 },
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          extraHTTPHeaders: {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'pt-PT,pt;q=0.9,en;q=0.8,es;q=0.7'
+          },
+          storageState: cachedCookies ? { cookies: cachedCookies } : undefined,
+        });
+      } catch (contextErr) {
+        // CDP-attached browsers may only expose a default persistent context.
+        const contexts = browser.contexts?.() || [];
+        if (!contexts.length) {
+          throw contextErr;
+        }
+        context = contexts[0];
+        ownsContext = false;
+        if (cachedCookies && cachedCookies.length > 0) {
+          await context.addCookies(cachedCookies).catch(() => {});
+        }
+      }
 
       page = await context.newPage();
       page.setDefaultTimeout(timeoutMs);
+      page.setDefaultNavigationTimeout(timeoutMs);
 
-      // Always ensure login first so we don't misinterpret the generic "error" page
-      try {
-        await ensureLoggedIn(page, loginCandidates, credential);
-      } catch (loginErr) {
-        clearSessionCache(cacheKey);
-        throw loginErr;
-      }
-
-      // Make sure we're sitting on a page that actually exposes the quick-search bar
       const searchHubCandidates = unique([
-        page.url(),
         ...searchCandidates,
         `${baseUrl}/seleccion_articulos/articulos/index`,
         `${baseUrl}/seleccion_articulos/articulos`,
@@ -403,23 +501,25 @@ export class GsmartProvider implements SupplierProvider {
         baseUrl
       ]);
 
-      let hubReady = false;
-      for (const candidate of searchHubCandidates) {
-        try {
-          await withRetry(
-            () => page.goto(candidate, { waitUntil: 'domcontentloaded' }),
-            { context: `Gsmart search hub navigation (${candidate})`, maxRetries: 2 }
-          );
-          await page.waitForLoadState('networkidle').catch(() => {});
-          await dismissCookieBanner(page);
-          const quickSearch = await findLocator(page, SEARCH_INPUT_SELECTORS);
-          if (quickSearch) {
-            hubReady = true;
-            break;
-          }
-        } catch (navErr) {
-          logger.warn('[GsmartProvider] navigation to %s failed: %s', candidate, navErr instanceof Error ? navErr.message : String(navErr));
+      // First attempt: use existing cached session without forcing login/captcha.
+      let hubReady = await navigateToSearchHub(page, searchHubCandidates);
+
+      if (!hubReady) {
+        if (!credential?.login || !credential?.password) {
+          throw new Error('CAPTCHA_REQUIRED: Missing GSMART session cache and credentials (manual user login required)');
         }
+        try {
+          await ensureLoggedIn(page, loginCandidates, credential);
+        } catch (loginErr) {
+          const loginMessage = loginErr instanceof Error ? loginErr.message : String(loginErr);
+          // Preserve previously cached session on captcha-only failures; manual flow will refresh it.
+          if (!hasCachedCookies || !loginMessage.startsWith('CAPTCHA_REQUIRED:')) {
+            clearSessionCache(cacheKey);
+          }
+          throw loginErr;
+        }
+
+        hubReady = await navigateToSearchHub(page, searchHubCandidates);
       }
 
       if (!hubReady) {
@@ -440,13 +540,17 @@ export class GsmartProvider implements SupplierProvider {
       const message = err instanceof Error ? err.message : String(err);
       logger.error('[GsmartProvider] login/search failed: %s', message);
       result.error = err as Error;
-      clearSessionCache(cacheKey);
+      if (!message.startsWith('CAPTCHA_REQUIRED:')) {
+        clearSessionCache(cacheKey);
+      }
     } finally {
       try {
         await page?.close();
       } catch {}
       try {
-        await context?.close();
+        if (ownsContext) {
+          await context?.close();
+        }
       } catch {}
     }
 

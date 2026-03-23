@@ -5,6 +5,7 @@ import { format } from 'util';
 class Logger {
     private logFile: string;
     private debugEnabled: boolean;
+    private stream: fs.WriteStream;
 
     constructor() {
         const logDir = path.resolve(process.cwd(), 'logs');
@@ -16,14 +17,15 @@ class Logger {
             fs.mkdirSync(logDir, { recursive: true });
         }
 
-        // Log startup
-        this.info('Logger initialized. Debug enabled: %s', this.debugEnabled);
-
-        // Ensure log directory exists
         const dir = path.dirname(this.logFile);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
+
+        this.stream = fs.createWriteStream(this.logFile, { flags: 'a' });
+
+        // Log startup after stream initialization.
+        this.info('Logger initialized. Debug enabled: %s', this.debugEnabled);
     }
 
     private write(level: string, message: string, ...args: any[]) {
@@ -32,7 +34,7 @@ class Logger {
         const logEntry = `[${timestamp}] ${level}: ${formattedMsg}\n`;
 
         // Always write to file
-        fs.appendFileSync(this.logFile, logEntry);
+        this.stream.write(logEntry);
 
         // Console output
         if (level === 'ERROR' || level === 'WARN' || this.debugEnabled) {

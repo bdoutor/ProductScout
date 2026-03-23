@@ -1,6 +1,6 @@
-// @ts-nocheck
 import * as cheerio from 'cheerio';
 import { ProductItem, Supplier } from '../types';
+import { getSupplierKey } from './supplier-utils';
 
 const MARTEX_DEFAULT_BASE_URL = 'https://sklep.martextruck.pl';
 
@@ -35,33 +35,35 @@ export function parsePrice(priceStr: string | undefined | null): number | null {
 export function parseAvailability(availStr: string | undefined | null): number | null {
   if (!availStr) return null;
 
-  // Look for explicit quantity
-  const match = availStr.match(/\d+/);
-  if (match) return parseInt(match[0], 10);
+  const normalized = availStr
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 
-  const lowerStr = availStr.toLowerCase();
+  // Negative signals first to avoid false positives like "nao disponivel".
+  if (
+    normalized.includes('esgotado') ||
+    normalized.includes('sem stock') ||
+    normalized.includes('indisponivel') ||
+    normalized.includes('nao disponivel') ||
+    normalized.includes('out of stock') ||
+    normalized.includes('unavailable')
+  ) {
+    return 0;
+  }
+
+  // Look for explicit quantity after negative checks.
+  const match = normalized.match(/\d+/);
+  if (match) return parseInt(match[0], 10);
 
   // Positive signals (pt/en)
   if (
-    lowerStr.includes('em stock') ||
-    lowerStr.includes('disponivel') ||
-    lowerStr.includes('disponível') ||
-    lowerStr.includes('available') ||
-    lowerStr.includes('in stock')
+    normalized.includes('em stock') ||
+    normalized.includes('disponivel') ||
+    normalized.includes('available') ||
+    normalized.includes('in stock')
   ) {
     return 1;
-  }
-
-  // Negative signals (pt/en)
-  if (
-    lowerStr.includes('esgotado') ||
-    lowerStr.includes('sem stock') ||
-    lowerStr.includes('indisponivel') ||
-    lowerStr.includes('indisponível') ||
-    lowerStr.includes('out of stock') ||
-    lowerStr.includes('unavailable')
-  ) {
-    return 0;
   }
 
   return null;
@@ -229,8 +231,267 @@ function extractMartexDetails($el: any) {
   };
 }
 
+function extractEvoPartsCode(raw: string | undefined | null): string | null {
+  const text = collapseWhitespace(raw);
+  if (!text) return null;
+  const artMatch = text.match(/\bart\.?\s*:\s*([A-Za-z0-9._/-]+)/i);
+  if (artMatch && artMatch[1]) return artMatch[1].trim();
+  const refMatch = text.match(/\bref\.?\s*:\s*([A-Za-z0-9._/-]+)/i);
+  if (refMatch && refMatch[1]) return refMatch[1].trim();
+  return null;
+}
+
+function parseEvoPartsAvailability(
+  $el: any,
+  availText: string | null
+): { availability: number | null; label: string | null } {
+  const rawTextBlock = collapseWhitespace(
+    [
+      availText || '',
+      $el.find('.stockgroup, .stock, .availability, .c_product_quantity, .c_product_grid_details').text(),
+      $el.text(),
+    ].join(' ')
+  );
+  const textBlock = rawTextBlock
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const rawNestedClasses = ($el.find('.stockgroup, .stock, .availability, .c_product_quantity')
+    .map((_: number, node: any) => (((node as any)?.attribs?.class) || ''))
+    .get() as string[])
+    .join(' ');
+  const classBlock = `${String($el.attr('class') || '')} ${rawNestedClasses}`
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const hasOutOfStockSignal =
+    /indispon|nao\s*dispon|esgotad|sem\s*stock|out\s*of\s*stock|unavailable/.test(textBlock) ||
+    /\bred\b/.test(classBlock);
+  if (hasOutOfStockSignal) {
+    return { availability: 0, label: availText || 'Out of stock' };
+  }
+
+  const hasStockSignal =
+    /dispon|em\s*stock|in\s*stock|available/.test(textBlock) ||
+    /\bgreen\b/.test(classBlock);
+  if (hasStockSignal) {
+    return { availability: 1, label: availText || '>1 in stock' };
+  }
+
+  return { availability: null, label: availText || null };
+}
+
+function normalizeRepeatedText(raw: string): string {
+  const value = collapseWhitespace(raw);
+  if (!value) return value;
+  const repeated = value.match(/^(.+?)\1+$/);
+  if (repeated && repeated[1]) {
+    return collapseWhitespace(repeated[1]);
+  }
+  return value;
+}
+
+function normalizeSearchText(raw: string | undefined | null): string {
+  return collapseWhitespace(raw)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function extractGsmartPvpSemIva(text: string | undefined | null): number | null {
+  const collapsed = collapseWhitespace(text);
+  if (!collapsed) return null;
+
+  const patterns = [
+    /PVP\s*\(\s*sem\s*IVA\s*\)\s*([0-9]+(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?)\s*(?:€|eur)?/i,
+    /PVP\s*\(\s*sin\s*IVA\s*\)\s*([0-9]+(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?)\s*(?:€|eur)?/i,
+    /PVP\s*(?:sem|sin)\s*IVA\s*[:\-]?\s*([0-9]+(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = collapsed.match(pattern);
+    if (match?.[1]) {
+      const parsed = parsePrice(match[1]);
+      if (parsed !== null) return parsed;
+    }
+  }
+
+  return null;
+}
+
+function isLikelyActionLabel(line: string): boolean {
+  const normalized = normalizeSearchText(line);
+  return (
+    normalized.includes('ver ficha') ||
+    normalized.includes('movimientos') ||
+    normalized.includes('meus armazens') ||
+    normalized.includes('armazon do fornecedor') ||
+    normalized.includes('armazem do fornecedor') ||
+    normalized.includes('encontre equivalentes') ||
+    normalized.includes('crossover tecdoc') ||
+    normalized.includes('comparar') ||
+    normalized.includes('veja pvp') ||
+    normalized.includes('veja sem iva') ||
+    normalized.includes('actualizar disponibilidad') ||
+    normalized.includes('atualizar disponibilidade')
+  );
+}
+
+function extractGsmartNameAndCode($: cheerio.CheerioAPI, $card: cheerio.Cheerio<any>): { name: string; code: string | null } {
+  const textLines = ($card.text() || '')
+    .split(/\r?\n+/)
+    .map((line) => collapseWhitespace(line))
+    .filter(Boolean)
+    .filter((line) => !isLikelyActionLabel(line));
+
+  const anchorTexts = $card.find('a')
+    .map((_, el) => collapseWhitespace($(el).text()))
+    .get()
+    .filter(Boolean)
+    .filter((line) => !isLikelyActionLabel(line));
+
+  const segmentTexts = $card
+    .find('a, div, span, p, td, li, h1, h2, h3, h4, h5, h6')
+    .map((_, el) => collapseWhitespace($(el).text()))
+    .get()
+    .filter(Boolean)
+    .filter((line) => line.length <= 180)
+    .filter((line) => !isLikelyActionLabel(line));
+
+  const baseCandidates = [...anchorTexts, ...segmentTexts, ...textLines]
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const codeCandidates = baseCandidates
+    .filter((line) => /^[A-Z0-9][A-Z0-9 ./_-]{2,24}$/.test(line))
+    .filter((line) => !/\b(PVP|IVA|AF|PT)\b/i.test(line));
+
+  const code = codeCandidates.find(Boolean) || null;
+  const codeNormalized = code ? normalizeSearchText(code) : null;
+
+  const nameCandidates = baseCandidates
+    .filter((line) => line.length >= 6)
+    .filter((line) => !/^\d+(?:[.,]\d+)?\s*€?$/.test(line))
+    .filter((line) => !/(^|\s)(pvp|liquido|desconto|descuento|disponivel|disponible|veja|comparar|pedido)(\s|$)/i.test(line))
+    .filter((line) => !/^\(?\d[\d.,]*\s*U\.?D\.?\)?$/i.test(line))
+    .filter((line) => normalizeSearchText(line) !== codeNormalized);
+
+  const name = nameCandidates.find((line) => {
+    // Prefer a human description over short codes/labels.
+    const words = line.split(/\s+/).filter(Boolean);
+    return words.length >= 2 || /[a-záàâãéèêíìîóòôõúùûç]/i.test(line);
+  }) || nameCandidates[0] || '';
+
+  return { name, code };
+}
+
+function extractGsmartUrl($: cheerio.CheerioAPI, $card: cheerio.Cheerio<any>, baseUrl: string): string {
+  const href = $card.find('a[href]')
+    .map((_, el) => ($(el).attr('href') || '').trim())
+    .get()
+    .find((value) => {
+      if (!value) return false;
+      if (value.startsWith('#') || /^javascript:/i.test(value)) return false;
+      return true;
+    });
+
+  if (!href) return baseUrl;
+  return extractAbsoluteUrl(href, baseUrl);
+}
+
+function parseGsmartCards(html: string, supplier: Supplier): ProductItem[] {
+  const $ = cheerio.load(html);
+  const baseUrl = supplier.base_url || 'https://eurocomp.gsmart.eu';
+  const pvpSemIvaRegex = /PVP\s*\(\s*(?:sem|sin)\s*IVA\s*\)/i;
+  const scope = $('#div-listado').first();
+  const searchRoot = scope.length ? scope : $('body');
+  if (!searchRoot.length) return [];
+
+  const cardRoots: any[] = [];
+  const seenRoots = new Set<any>();
+  const qualifiesAsCard = (node: any): boolean => {
+    const nodeText = collapseWhitespace($(node).text());
+    if (!nodeText) return false;
+    if (nodeText.length < 30) return false;
+    if (!pvpSemIvaRegex.test(nodeText)) return false;
+    const pvpSemMatches = nodeText.match(new RegExp(pvpSemIvaRegex.source, 'gi')) || [];
+    if (pvpSemMatches.length !== 1) return false;
+    if (!/(PVP\s*\(\s*(?:com|con)\s*IVA\s*\)|L[ií]quido|Descuento|Desconto|Comparar|Tecdoc|Dispon[a-z]+)/i.test(nodeText)) return false;
+    // Prefer nodes that look like actual product cards, but do not require anchors (some GSMART views use non-anchor labels).
+    const richChildCount = $(node).find('a, button, img, input, select').length;
+    return richChildCount > 0 || nodeText.length > 120;
+  };
+
+  const candidateNodes = searchRoot.find('*').toArray().filter(qualifiesAsCard);
+  if (candidateNodes.length === 0) {
+    return [];
+  }
+
+  for (const root of candidateNodes) {
+    if (!root || root.type !== 'tag') continue;
+    if (seenRoots.has(root)) continue;
+    // Skip wrappers that contain another qualifying candidate (prefer the smallest matching node).
+    const hasQualifiedChild = $(root)
+      .find('*')
+      .toArray()
+      .some((child) => child !== root && qualifiesAsCard(child));
+    if (hasQualifiedChild) continue;
+
+    const rootText = collapseWhitespace($(root).text());
+    if (!rootText) continue;
+
+    seenRoots.add(root);
+    cardRoots.push(root);
+  }
+
+  const items: ProductItem[] = [];
+
+  for (const root of cardRoots) {
+    const $card = $(root);
+    const rawText = collapseWhitespace($card.text());
+    if (!rawText) continue;
+
+    const price = extractGsmartPvpSemIva(rawText);
+    const normalizedText = normalizeSearchText(rawText);
+    const hasStoreAvailability =
+      (/dispon[a-z]*\s+(?:em|na)\s+loja/.test(normalizedText) || (/dispon/.test(normalizedText) && /loja/.test(normalizedText))) ||
+      (/dispon[a-z]*\s+en\s+tienda/.test(normalizedText) || (/dispon/.test(normalizedText) && /tienda/.test(normalizedText)));
+
+    const { name, code } = extractGsmartNameAndCode($, $card);
+    if (!name) continue;
+
+    const availability = hasStoreAvailability ? 1 : 0;
+    const availability_label = hasStoreAvailability ? '>1' : 'Out of stock';
+
+    items.push({
+      name,
+      code,
+      price,
+      availability,
+      availability_label,
+      delivery: null,
+      url: extractGsmartUrl($, $card, baseUrl),
+      store: supplier.name,
+    });
+  }
+
+  const uniqueItems: ProductItem[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const key = `${item.url}|${item.code || ''}|${item.price ?? 'na'}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueItems.push(item);
+  }
+
+  return uniqueItems;
+}
+
 function getSupplierSpecificSelectors(supplier: Supplier): any {
-  if (supplier.name.toLowerCase().includes('nipocar')) {
+  const key = getSupplierKey(supplier);
+  if (key === 'nipocar') {
     return {
       // Nipocar catalogue search results
       item: '.product-list-item, .product-list > .row, .product-list > div, .product-item, .row.produto, .produto, .product-wrapper, .lista-produtos .row, .lista-produtos li, .product-row, .linha-produto, .listagem-produtos .row, table.table tbody tr, table tbody tr',
@@ -242,7 +503,7 @@ function getSupplierSpecificSelectors(supplier: Supplier): any {
       link: '.product-name a, h3 a, a[href*="produto"], a[href*="product"], a[href*="id"], a'
     };
   }
-  if (supplier.name.toLowerCase().includes('casals')) {
+  if (key === 'casals') {
     return {
       item: 'table.table tbody tr',
       name: 'td:nth-child(2)',
@@ -252,8 +513,19 @@ function getSupplierSpecificSelectors(supplier: Supplier): any {
       availability: 'td:nth-child(1)'
     };
   }
+  if (key === 'evoparts') {
+    return {
+      item: '.c_product_item, .l_product_item, .product-layout, .product-item',
+      name: 'h4 a span.ellip-line, h4 span.ellip-line, h4 a, h4, .c_product_text h4 a, .product-name, .name',
+      code: 'p.oneline span, p.oneline, .product-reference, .sku, .code',
+      price: '.price_box .current_price, .price_box .priceCheck, .price_box .price, .current_price, .price',
+      availability: '.stockgroup, .stock, .availability, .c_product_quantity',
+      delivery: '.delivery, .prazo, .lead-time',
+      link: 'h4 a, .c_product_img a, a[href*="/produto"], a[href*="/product-"], a[href*="/art"]'
+    };
+  }
   // Seletores específicos para o Auger
-  if (supplier.name.toLowerCase().includes('auger')) {
+  if (key === 'auger') {
     return {
       item: '.product-card, .search-result-item',
       name: '.card-title',
@@ -264,7 +536,7 @@ function getSupplierSpecificSelectors(supplier: Supplier): any {
       link: '.card-title a, a[href*="product-detail"], a.product-link, .item-link'
     };
   }
-  if (supplier.name.toLowerCase().includes('martex')) {
+  if (key === 'martex') {
     return {
       item: '.partscontrol-box',
       name: '.partscontrol-box-detail-link',
@@ -275,6 +547,26 @@ function getSupplierSpecificSelectors(supplier: Supplier): any {
       link: '.partscontrol-box-detail-link'
     };
   }
+  if (key === 'airfren') {
+    return {
+      item: '.product-card',
+      name: 'h3.product-title a',
+      code: '.product-category a',
+      price: 'h4.product-price',
+      availability: '.product-badge',
+      link: 'a.product-thumb',
+    };
+  }
+  if (key === 'ryme') {
+    return {
+      item: '.product-list-itm',
+      name: 'a.title.product-link',
+      code: '.product-list-title p:not(:first-child)',
+      price: 'app-price-display span, .product-list-price span',
+      availability: 'app-stock .dots',
+      link: 'a.product-link',
+    };
+  }
   return supplier.selectors.result_selectors;
 }
 
@@ -282,12 +574,24 @@ export function parseHtml(
   html: string,
   supplier: Supplier
 ): ProductItem[] {
+  const supplierKey = getSupplierKey(supplier);
+
+  if (supplierKey === 'gsmart') {
+    const gsmartItems = parseGsmartCards(html, supplier);
+    if (gsmartItems.length > 0) {
+      return gsmartItems;
+    }
+  }
+
   const $ = cheerio.load(html);
   let items: ProductItem[] = [];
   const selectors = getSupplierSpecificSelectors(supplier);
-  const isMartex = supplier.name.toLowerCase().includes('martex');
-  const isCasals = supplier.name.toLowerCase().includes('casals');
-  const isNipocar = supplier.name.toLowerCase().includes('nipocar');
+  const isMartex = supplierKey === 'martex';
+  const isCasals = supplierKey === 'casals';
+  const isNipocar = supplierKey === 'nipocar';
+  const isEvoParts = supplierKey === 'evoparts';
+  const isRyme = supplierKey === 'ryme';
+  const isAirFren = supplierKey === 'airfren';
   const martexBaseUrl = isMartex ? ensureMartexBaseUrl(supplier.base_url) : supplier.base_url;
 
   $(selectors.item).each((_, element) => {
@@ -309,7 +613,7 @@ export function parseHtml(
       const baseSource = titleLink.length ? titleLink : titleEl;
       const baseTitle = baseSource.clone().children().remove().end().text().trim();
       const additionalTitle = (titleLink.length ? titleLink : titleEl).find('span').text().trim();
-      if (supplier.name.toLowerCase().includes('auger')) {
+      if (supplierKey === 'auger') {
         if (baseTitle) {
           nameText = baseTitle;
         }
@@ -321,16 +625,36 @@ export function parseHtml(
       }
     }
     nameText = nameText.replace(/\s+/g, ' ').trim();
+    if (isEvoParts) {
+      nameText = normalizeRepeatedText(nameText);
+    }
 
     let codeText = selectors.code ? $el.find(selectors.code).first().text().trim() : null;
     if (codeText && codeText.length === 0) codeText = null;
     if (codeText) {
       codeText = codeText.replace(/\s+/g, '').trim();
+      if (isEvoParts) {
+        const extractedCode = extractEvoPartsCode(codeText);
+        if (extractedCode) codeText = extractedCode;
+      }
+      if (isRyme) {
+        codeText = codeText.replace(/^Ref:/i, '').trim();
+      }
+      if (isAirFren) {
+        codeText = codeText.replace(/^Ref\.\s*/i, '').trim();
+      }
     }
     if (!codeText) {
       const maybeCode = $el.attr('data-sku')
         || $el.find('.card-result-count, .product-results__shortlist li').first().text().trim();
       codeText = maybeCode ? maybeCode : null;
+      if (isEvoParts && codeText) {
+        const extractedCode = extractEvoPartsCode(codeText);
+        if (extractedCode) codeText = extractedCode;
+      }
+    }
+    if (isEvoParts && !codeText) {
+      codeText = extractEvoPartsCode($el.text());
     }
 
     const priceText = selectors.price ? $el.find(selectors.price).first().text().trim() : '';
@@ -363,10 +687,10 @@ export function parseHtml(
       const isRed = cls.includes('red');
       if (isGreen) {
         item.availability = 1;
-        (item as any).availability_label = 'In stock';
+        item.availability_label = 'In stock';
       } else if (isRed) {
         item.availability = 0;
-        (item as any).availability_label = 'Out of stock';
+        item.availability_label = 'Out of stock';
       }
     }
 
@@ -376,7 +700,7 @@ export function parseHtml(
       if (item.availability === null) {
         if (/dispon/i.test(availRaw) || /porto/.test(availRaw) || /lisboa/.test(availRaw)) {
           item.availability = 1;
-          (item as any).availability_label = (item as any).availability_label || 'In stock';
+          item.availability_label = item.availability_label || 'In stock';
         }
       }
     }
@@ -390,13 +714,45 @@ export function parseHtml(
         item.availability = martexDetails.availability;
       }
       if (martexDetails.availabilityLabel) {
-        (item as any).availability_label = martexDetails.availabilityLabel;
+        item.availability_label = martexDetails.availabilityLabel;
       }
       if (martexDetails.summary) {
-        (item as any).stock_summary = martexDetails.summary;
+        item.stock_summary = martexDetails.summary;
       }
       if (item.delivery && typeof item.delivery === 'string' && item.delivery.toLowerCase().includes('central')) {
         item.delivery = null;
+      }
+    }
+
+    if (isEvoParts) {
+      const availabilityInfo = parseEvoPartsAvailability($el, availText);
+      if (availabilityInfo.availability !== null) {
+        item.availability = availabilityInfo.availability;
+      }
+      if (availabilityInfo.label) {
+        item.availability_label = availabilityInfo.label;
+      }
+    }
+
+    if (isAirFren) {
+      const badgeText = (availText || '').toLowerCase().trim();
+      if (badgeText.includes('disponible') && !badgeText.includes('no ')) {
+        item.availability = 1;
+        item.availability_label = 'In stock';
+      } else if (badgeText.includes('no disponible') || badgeText.includes('agotado')) {
+        item.availability = 0;
+        item.availability_label = 'Out of stock';
+      }
+    }
+
+    if (isRyme) {
+      const stockEl = $el.find('app-stock .dots').first();
+      const stockClass = stockEl.attr('class') || '';
+      const levelMatch = stockClass.match(/level_(\d)/);
+      if (levelMatch) {
+        const level = parseInt(levelMatch[1], 10);
+        item.availability = level > 0 ? 1 : 0;
+        item.availability_label = level > 0 ? 'In stock' : 'Out of stock';
       }
     }
 
@@ -404,7 +760,7 @@ export function parseHtml(
   });
 
   // Heuristic fallback for Auger: anchors linking to product-detail
-  if (items.length === 0 && supplier.name.toLowerCase().includes('auger')) {
+  if (items.length === 0 && supplierKey === 'auger') {
     $('a[href*="product-detail"]').each((_, el) => {
       const $a = $(el);
       const nameText = $a.text().trim();
@@ -436,6 +792,77 @@ export function parseHtml(
   return uniqueItems;
 }
 
+/**
+ * Parser dedicado para o formato de listagem do Nipocar.
+ * Anteriormente em scraper.ts — movido aqui para centralizar todos os parsers HTML.
+ */
+export function parseNipocar(html: string, supplier: Supplier): ProductItem[] {
+  const $ = cheerio.load(html);
+  const items: ProductItem[] = [];
+  const baseUrl = supplier.base_url || 'https://nipocar.pt';
+
+  $('.winsig_product_item_list_custom').each((_, el) => {
+    const container = $(el);
+
+    const name = container.find('.product_name').first().text().trim()
+      || container.find('.se-item-reference').first().text().trim()
+      || '';
+    const code = container.find('.se-item-reference a').first().text().trim()
+      || container.find('input[id^="input_qtd_"]').attr('ref')
+      || null;
+
+    const priceTextCandidates = [
+      container.find('.price_two span').first().text(),
+      container.find('.price_two.value.price span').first().text(),
+      container.find('.productListNoIvaPrice .price span').first().text(),
+      container.find('.price_two').first().text(),
+      container.find('[class*=price]').first().text(),
+    ]
+      .map((t) => t?.trim().replace(/\s+/g, ' '))
+      .filter(Boolean);
+
+    let price: number | null = null;
+    for (const pt of priceTextCandidates) {
+      const p = parsePrice(pt);
+      if (p !== null) { price = p; break; }
+    }
+
+    if (price === null) {
+      const onclick = container.find('button[onclick*="add_to_cart_Advance3"]').attr('onclick') || '';
+      const m = onclick.match(/add_to_cart_Advance3\([^,]+,'([^']+)'/);
+      const payload = m ? m[1] : null;
+      if (payload) {
+        const parts = payload.split('_P_');
+        if (parts.length >= 3) {
+          const p = parsePrice(parts[2]);
+          if (p !== null) price = p;
+        }
+      }
+    }
+
+    if (price === null) {
+      const text = container.text() || '';
+      const currencyRegex = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*(?:\u20ac|€|eur|euro)/gi;
+      let m;
+      while ((m = currencyRegex.exec(text)) !== null) {
+        const p = parsePrice(m[1]);
+        if (p !== null) { price = p; break; }
+      }
+    }
+
+    const hasStockGreen = container.find('.stockgroup .stock.green').length > 0;
+    const availability = hasStockGreen ? 1 : 0;
+    const availability_label = hasStockGreen ? 'In stock' : 'Out of stock';
+
+    const href = container.find('.se-item-reference a').attr('href') || '';
+    const url = extractAbsoluteUrl(href, baseUrl) || baseUrl;
+
+    items.push({ name, code, price, availability, availability_label, delivery: null, url, store: supplier.name });
+  });
+
+  return items;
+}
+
 export function sortItems(items: ProductItem[]): ProductItem[] {
   return items.sort((a, b) => {
     const A = (a.availability ?? 0) > 0 ? 0 : 1;
@@ -446,4 +873,5 @@ export function sortItems(items: ProductItem[]): ProductItem[] {
     return ap - bp;
   });
 }
+
 

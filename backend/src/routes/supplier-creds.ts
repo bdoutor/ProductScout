@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
 import { requireAuth } from '../utils/session';
+import { invalidateSupplierRegistryCache } from '../services/supplier-runtime';
 
 const router = Router();
 
@@ -101,6 +102,8 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(500).json({ error: error.message });
     }
 
+    invalidateSupplierRegistryCache();
+
     return res.status(201).json({
       id: data.id,
       name: data.name,
@@ -158,6 +161,8 @@ router.put('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Supplier credential not found' });
     }
 
+    invalidateSupplierRegistryCache();
+
     return res.json({
       id: data.id,
       name: data.name,
@@ -196,6 +201,8 @@ router.delete('/:id', async (req: Request, res: Response) => {
       console.error('Error deleting supplier credential:', error);
       return res.status(500).json({ error: error.message });
     }
+
+    invalidateSupplierRegistryCache();
 
     return res.json({ ok: true });
   } catch (error) {

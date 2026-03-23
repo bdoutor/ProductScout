@@ -3,7 +3,8 @@
   "version": "2.0.0-alpha.2",
   "description": "ProductScout web interface - Automotive parts edition",
   "scripts": {
-    "dev": "node open-next-dev.js",
+    "predev": "node scripts/clean-next-cache.js && powershell -ExecutionPolicy Bypass -File ..\\scripts\\windows\\kill-ports.ps1 -Ports 3000",
+    "dev": "node ../ensure-backend.js && node dev-raw.js",
     "dev:raw": "node dev-raw.js",
     "build": "next build",
     "start": "next start",

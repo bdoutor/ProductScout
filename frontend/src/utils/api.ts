@@ -3,7 +3,10 @@ import {
   SearchResponse,
   SearchRun,
   ProgressiveSearchStartResponse,
-  ProgressiveSearchProgressResponse
+  ProgressiveSearchProgressResponse,
+  ManualSessionInitResponse,
+  ManualSessionJob,
+  SupplierAuthStatusResponse
 } from '@/types';
 
 const API_URL =
@@ -72,7 +75,8 @@ export const searchProducts = async (query: string, debug: boolean = false): Pro
         search_run_id: supplier.search_run_id,
         error_message: supplier.error || supplier.error_message || undefined,
         error_details: supplier.error_details || undefined,
-      }))
+      })),
+      summary: rawData.summary || undefined,
     };
 
     console.log('Transformed response:', transformed);
@@ -85,10 +89,16 @@ export const searchProducts = async (query: string, debug: boolean = false): Pro
 
 export const startProgressiveSearch = async (
   query: string,
-  debug: boolean = false
+  debug: boolean = false,
+  selectedSupplierIds?: string[]
 ): Promise<ProgressiveSearchStartResponse> => {
   try {
-    const response = await apiClient.post('/api/search/progressive', { query, debug });
+    const payload: Record<string, unknown> = { query, debug };
+    if (Array.isArray(selectedSupplierIds)) {
+      payload.selected_supplier_ids = selectedSupplierIds;
+    }
+
+    const response = await apiClient.post('/api/search/progressive', payload);
     const data = response.data || {};
     if (data.fallback) {
       data.fallback.items = data.fallback.items || [];
@@ -115,6 +125,29 @@ export const getProgressiveSearchProgress = async (
   return data as ProgressiveSearchProgressResponse;
 };
 
+/**
+ * Open an SSE stream for a progressive search run.
+ * Returns the EventSource so the caller can close it when needed.
+ */
+export const openProgressStream = (
+  runId: string,
+  onData: (data: ProgressiveSearchProgressResponse) => void,
+  onError: (err: Event) => void
+): EventSource => {
+  const url = `${API_URL}/api/search/progressive/${runId}/stream`;
+  const es = new EventSource(url, { withCredentials: true });
+  es.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data) as ProgressiveSearchProgressResponse;
+      onData(data);
+    } catch (err) {
+      console.error('SSE parse error:', err);
+    }
+  };
+  es.onerror = onError;
+  return es;
+};
+
 export const testSupplier = async (
   supplier_id: string,
   query: string,
@@ -135,6 +168,89 @@ export const getSearchRun = async (id: string): Promise<SearchRun> => {
 
 export const getSuppliers = async (): Promise<any[]> => {
   const response = await apiClient.get('/api/suppliers');
+  return response.data;
+};
+
+export const initManualSupplierSession = async (
+  supplierName: string,
+  query?: string,
+  browserPreference?: string,
+  browserMode?: string
+): Promise<ManualSessionInitResponse> => {
+  try {
+    const response = await apiClient.post(
+      '/api/supplier-session/init',
+      {
+        supplier_name: supplierName,
+        query,
+        browser_preference: browserPreference,
+        browser_mode: browserMode,
+      },
+      { timeout: 240000 }
+    );
+    return response.data as ManualSessionInitResponse;
+  } catch (error: any) {
+    const backendMessage =
+      error?.response?.data?.error ||
+      error?.response?.data?.message ||
+      error?.message ||
+      'Failed to initialize supplier session';
+    throw new Error(backendMessage);
+  }
+};
+
+export const getManualSupplierSessionJob = async (jobId: string): Promise<ManualSessionJob> => {
+  const response = await apiClient.get(`/api/supplier-session/init/${encodeURIComponent(jobId)}`);
+  return response.data as ManualSessionJob;
+};
+
+export const getSupplierAuthStatuses = async (): Promise<SupplierAuthStatusResponse> => {
+  const response = await apiClient.get('/api/suppliers/auth-status');
+  const data = response.data || {};
+  data.items = data.items || [];
+  return data as SupplierAuthStatusResponse;
+};
+
+export const refreshSupplierAuthStatuses = async (
+  supplierName?: string
+): Promise<SupplierAuthStatusResponse> => {
+  const response = await apiClient.post('/api/suppliers/auth-refresh', {
+    supplier_name: supplierName,
+  });
+  const data = response.data || {};
+  data.items = data.items || [];
+  return data as SupplierAuthStatusResponse;
+};
+
+// ── User management (admin only) ──────────────────────────────────────────
+
+export interface AppUser {
+  id: string;
+  login: string;
+  role: 'admin' | 'user';
+  active: boolean;
+  created_at: string;
+}
+
+export const getUsers = async (): Promise<AppUser[]> => {
+  const response = await apiClient.get('/api/admin/users');
+  return response.data;
+};
+
+export const createUser = async (payload: {
+  login: string;
+  password: string;
+  role: 'admin' | 'user';
+}): Promise<AppUser> => {
+  const response = await apiClient.post('/api/admin/users', payload);
+  return response.data;
+};
+
+export const updateUser = async (
+  id: string,
+  payload: Partial<{ login: string; password: string; role: 'admin' | 'user'; active: boolean }>
+): Promise<AppUser> => {
+  const response = await apiClient.patch(`/api/admin/users/${id}`, payload);
   return response.data;
 };
 

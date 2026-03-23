@@ -1,29 +1,28 @@
 PRODUCTSCOUT — RELATÓRIO DE ANÁLISE ARQUITECTURAL
-Gerado por Claude Sonnet 4.6 | Última actualização: 2026-03-22 (sessão 7)
+Gerado por Claude Sonnet 4.6 | Última actualização: 2026-03-23 (sessão 9)
 ======================================================
 
 
 ## SUMÁRIO EXECUTIVO
 
 O sistema tem uma base arquitectural sólida (progressive search, strategy pattern para providers,
-isolamento de falhas por supplier). Seis fases de trabalho concluídas. Todos os bugs críticos,
+isolamento de falhas por supplier). Nove fases de trabalho concluídas. Todos os bugs críticos,
 todos os problemas de arquitectura prioritários, as optimizações de performance, o redesign
-visual completo do frontend, todos os fixes de backlog, e dois novos suppliers implementados
-e validados em produção.
+visual completo do frontend, todos os fixes de backlog, dois novos suppliers implementados,
+sistema de gestão de utilizadores com RBAC, e auditoria de segurança completa.
 
 Build TypeScript: LIMPO (zero erros, frontend e backend).
 Todos os suppliers: FUNCIONAIS (7/8 com login automático, Gsmart manual por Cloudflare).
 Suppliers activos: AUGER, Martex, Casals, EvoParts, Nipocar, Ryme, Air Fren (+ GSMART manual).
-Migração BD: auth_mode e supplier_key aplicados para todos os suppliers.
+Autenticação: bcrypt via Supabase app_users, roles admin/user, sem fallback em texto simples.
 Performance de pesquisa: ~28s (era ~54s) — melhoria de 48%.
 Frontend: redesign Eurocomponentes completo, UI 100% em português.
 Busca progressiva: SSE em vez de polling (resultados sem latência de intervalo).
-Backlog arquitectural: todos os fixes concluídos (Fix 4, 6, 7, 12).
-QA completo executado: 15/15 checks passados na sessão 7.
+Segurança: auditoria completa, lixo removido, segredos fortes, fallback inseguro eliminado.
 
 
 ======================================================
-## ESTADO ACTUAL — O QUE FOI FEITO (FASES 1 A 6)
+## ESTADO ACTUAL — O QUE FOI FEITO (FASES 1 A 9)
 ======================================================
 
 FASE 1 — Bugs críticos
@@ -151,6 +150,56 @@ FASE 6 — Novos suppliers: Ryme + Air Fren (sessão 7)
         Pesquisa "filtro": 34 items, 7/8 success (GSMART esperado), dados completos
         SSE fix verificado, auth_mode correcto para todos, duplicado Nipocar desactivado
 
+FASE 7 — Sistema de utilizadores com RBAC (sessão 8)
+  [x] Tabela app_users criada no Supabase
+        Colunas: id, login, password_hash (bcrypt), role (admin|user), active, created_at
+        Utilizador admin criado via SQL com hash bcrypt
+  [x] auth.ts reescrito: login via Supabase app_users com bcrypt.compare()
+        Fallback .env ADMIN_USER/ADMIN_PASS removido completamente (inseguro)
+        /auth/me devolve { user, role } — role armazenado na sessão cookie
+  [x] SessionData actualizado: campo role adicionado ('admin' | 'user')
+  [x] Middleware requireAdmin criado (backend/src/middleware/requireAdmin.ts)
+        Verifica session.role === 'admin', devolve 403 caso contrário
+  [x] Rotas /api/admin/users implementadas
+        GET /    — lista utilizadores (sem password_hash)
+        POST /   — cria utilizador com bcrypt hash, valida role
+        PATCH /:id — actualiza login/role/active/password (password opcional)
+        Duplicate login → 409 Conflict
+  [x] AuthHeader.tsx: tab "Configuração" só visível para role admin
+        Fetch /auth/me no mount, renderização condicional
+  [x] admin/layout.tsx: redireccionamento para / se role !== admin
+        Impede acesso directo à URL /admin por utilizadores com role user
+  [x] admin/page.tsx: dois separadores — Fornecedores e Utilizadores
+        Fornecedores: CRUD existente (redesenhado visualmente)
+        Utilizadores: tabela com login/papel/estado/data, formulário de criação inline,
+                      edição inline com password opcional, badges de role e estado
+  [x] api.ts: getUsers(), createUser(), updateUser() adicionados
+  [x] Campo pesquisa movido para o topo da página (acima do painel de fornecedores)
+
+FASE 8 — Correcção getSupabaseClient (sessão 9)
+  [x] supabase.ts não exportava getSupabaseClient()
+        auth.ts e admin-users.ts importavam função inexistente → Internal server error no login
+        Fix: getSupabaseClient() adicionado como wrapper de supabase (singleton)
+
+FASE 9 — Auditoria de segurança e limpeza (sessão 9)
+  [x] 12 ficheiros tmp-* eliminados (debug Playwright: airfren, ryme, gsmart)
+  [x] 2 ficheiros search-response*.json eliminados (dados de teste)
+  [x] 9 ficheiros de debug em logs/ eliminados (HTML + screenshots)
+  [x] Ficheiros temp_*.txt, test.txt, zzz_* eliminados
+  [x] backend/.env.backup eliminado (tinha credenciais duplicadas)
+  [x] Logs limpos (backend-current.log: 9.5MB → 0)
+  [x] SESSION_SECRET: "dev-session-secret-change-me" → 96 chars aleatórios
+  [x] SUPPLIER_CREDS_ENC_KEY: "your-encryption-key-here" → 64 chars aleatórios
+  [x] DEBUG=true → DEBUG=false
+  [x] Fallback ADMIN_USER/ADMIN_PASS removido do .env e do código auth.ts
+  [x] .gitignore reforçado: session-cache, tmp-*, debug HTML/PNG, env.backup cobertos
+
+  PENDENTE (requer acção manual):
+  [ ] Rodar chaves Supabase no dashboard (SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY)
+        Supabase Dashboard → Project Settings → API → Regenerate keys
+  [ ] Rodar Firecrawl API key (se ainda em uso)
+        firecrawl.dev → API Keys → Regenerar
+
 
 ======================================================
 ## MÉTRICAS DE PERFORMANCE — ANTES vs DEPOIS
@@ -194,16 +243,60 @@ Nota GSMART: requer inicialização de sessão manual via:
 
 
 ======================================================
+## UTILIZADORES DA APLICAÇÃO
+======================================================
+
+  Utilizador   Role    Estado   Criado via
+  ----------   ------  -------  ----------
+  admin        admin   Activo   SQL directo Supabase
+  mauro        user    Activo   SQL directo Supabase
+
+  Gestão de utilizadores: Configuração → Utilizadores (apenas admins)
+  Autenticação: bcrypt via tabela app_users no Supabase
+  Roles: admin (Pesquisa + Configuração) | user (Pesquisa apenas)
+
+
+======================================================
+## SEGURANÇA — ESTADO ACTUAL
+======================================================
+
+  Item                          Estado
+  ----------------------------  -------
+  Passwords bcrypt (custo 10)   OK
+  SESSION_SECRET (96 chars)     OK
+  SUPPLIER_CREDS_ENC_KEY        OK
+  AES-256-GCM para creds BD     OK
+  HTTPOnly + SameSite cookies   OK
+  Helmet headers                OK
+  Rate limiting (120 req/min)   OK
+  CORS restrito a FRONTEND_URL  OK
+  Fallback admin plaintext      REMOVIDO
+  DEBUG desactivado             OK
+  .env.backup                   ELIMINADO
+  Ficheiros tmp/debug           ELIMINADOS
+  .gitignore completo           OK
+  Chaves Supabase               ⚠️ RODAR (ver pendente acima)
+  Firecrawl API key             ⚠️ RODAR SE EM USO
+
+
+======================================================
 ## PENDENTE / PRÓXIMOS PASSOS SUGERIDOS
 ======================================================
 
-Nada crítico pendente. Sugestões para iterações futuras:
+  Segurança (requer acção manual):
+  [ ] Rodar chaves Supabase (SERVICE_ROLE_KEY + ANON_KEY)
+  [ ] Rodar Firecrawl API key (se em uso)
 
+  Funcionalidade futura:
   [ ] GSMART: investigar automação do captcha ou alternativa à sessão manual
   [ ] Mais suppliers: aplicar o template de onboarding (ryme/airfren como referência)
   [ ] Auger / Casals: 0 resultados em "filtro" — verificar se selectores do parser precisam ajuste
   [ ] Adicionar paginação nos resultados Ryme/AirFren (actualmente devolve só 1ª página)
   [ ] Testes automatizados por supplier (script diagnóstico como base)
+
+  Deploy:
+  [ ] Decidir modelo de deploy: servidor local (IIS/PM2) vs cloud (Railway/Render)
+  [ ] Preparar Dockerfile ou script de instalação para servidor destino
 
 
 ======================================================
@@ -257,6 +350,12 @@ Nada crítico pendente. Sugestões para iterações futuras:
 - isAuthenticatedEvoPartsHtml() centralizado em evoparts.ts:
   Verificação completa (resultados + pricing signals + client token) exportada para scraper.ts.
   hasAuthenticatedPricingSignals() mantido privado para uso interno do EvoPartsProvider.
+
+- app_users com bcrypt: autenticação robusta sem credenciais em texto simples.
+  Sem fallback de emergência — se Supabase inacessível, ninguém entra (comportamento seguro).
+
+- requireAdmin middleware: protecção de rotas admin independente do frontend.
+  Layout /admin também verifica role no cliente — dupla camada de protecção.
 
 
 ======================================================

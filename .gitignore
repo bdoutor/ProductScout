@@ -50,6 +50,24 @@ frontend/_start_frontend.bat
 nul
 response.json
 test-result.json
+temp_*.txt
+*.text
+zzz_*.txt
+test.txt
+
+# Debug / Playwright temp files
+backend/tmp-*.html
+backend/tmp-*.js
+backend/tmp-*.png
+backend/logs/*.html
+backend/logs/*.png
+backend/search-response*.json
+
+# Playwright session cache (contém cookies de sessão de fornecedores)
+backend/.session-cache/
+
+# Env backups
+*.env.backup
 
 # Cache
 .cache/

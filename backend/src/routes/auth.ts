@@ -45,14 +45,6 @@ router.post('/login', async (req: Request, res: Response) => {
       }
     }
 
-    // Fallback: .env credentials (always admin role)
-    const validUser = process.env.ADMIN_USER;
-    const validPass = process.env.ADMIN_PASS;
-    if (validUser && validPass && user === validUser && pass === validPass) {
-      setSession(res, user, 'admin');
-      return res.json({ ok: true, user, role: 'admin' });
-    }
-
     return res.status(401).json({ error: 'Credenciais inválidas' });
   } catch (error) {
     logger.error('[auth] Login error: %s', (error as Error).message);

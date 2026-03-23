@@ -3,56 +3,6 @@
 import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
-/* ── Eurocomponentes puzzle-piece logo ────────────────────────────────────
-   Replicates the brand mark: a cyan puzzle piece with mechanical inner detail.
-   The outer shape has two tabs (right + bottom) and two blanks (top + left).  */
-function EuroLogo({ size = 36 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 44 44"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      {/* Outer puzzle piece: blank top, tab right, tab bottom, blank left */}
-      <path
-        fill="#00AEEF"
-        d="
-          M2 2
-          L14 2
-          Q22 11 30 2
-          L42 2
-          L42 14
-          Q51 22 42 30
-          L42 42
-          L30 42
-          Q22 51 14 42
-          L2 42
-          L2 30
-          Q-7 22 2 14
-          Z
-        "
-      />
-      {/* Inner mechanical detail — simplified bracket suggesting a component */}
-      <path
-        fill="none"
-        stroke="white"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.55"
-        d="M13 22 L13 14 L22 14 M22 14 L22 10 M22 14 L22 18
-           M22 30 L22 34 M22 26 L22 30
-           M31 22 L31 30 L22 30"
-      />
-      {/* Central hub */}
-      <circle cx="22" cy="22" r="4" fill="white" opacity="0.30" />
-      <circle cx="22" cy="22" r="2" fill="white" opacity="0.55" />
-    </svg>
-  );
-}
 
 export default function AuthHeader() {
   const pathname = usePathname();
@@ -90,7 +40,7 @@ export default function AuthHeader() {
         style={{
           maxWidth: 1280,
           margin: '0 auto',
-          padding: '0 24px',
+          padding: '0 32px',
           height: 60,
           display: 'flex',
           alignItems: 'center',
@@ -98,8 +48,7 @@ export default function AuthHeader() {
         }}
       >
         {/* ── Brand ─────────────────────────────────────────────────────── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11, flexShrink: 0 }}>
-          <EuroLogo size={45} />
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             <span
               style={{

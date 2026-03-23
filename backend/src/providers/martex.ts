@@ -7,6 +7,7 @@ import { loadSessionCache, saveSessionCache, clearSessionCache } from '../utils/
 import { withRetry } from '../utils/retry-helper';
 import fs from 'fs';
 import path from 'path';
+import { getSupplierKey, getSupplierSessionCacheKey } from '../utils/supplier-utils';
 
 const USERNAME_SELECTORS = [
   'input[name="ctl00$box_3$tbUserId"]',
@@ -165,7 +166,7 @@ async function isMartexLoggedIn(page: import('playwright').Page): Promise<boolea
 
 export class MartexProvider implements SupplierProvider {
   supports(supplier: Supplier): boolean {
-    return supplier.name.toLowerCase().includes('martex');
+    return getSupplierKey(supplier) === 'martex';
   }
 
   async loginAndFetch(
@@ -175,7 +176,7 @@ export class MartexProvider implements SupplierProvider {
     timeoutMs: number = 20000
   ): Promise<ProviderFetchResult> {
     const result: ProviderFetchResult = { html: '', status: 500 };
-    const cacheKey = `martex-${supplier.id || supplier.name || 'default'}`;
+    const cacheKey = getSupplierSessionCacheKey(supplier);
 
     try {
       const browser = await getBrowser();
@@ -303,7 +304,7 @@ export class MartexProvider implements SupplierProvider {
 
           await withRetry(async () => {
             await Promise.all([
-              page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 }).catch(() => {}),
+              page.waitForNavigation({ waitUntil: 'networkidle', timeout: 8000 }).catch(() => {}),
               quickSearchButton.click({ force: true })
             ]);
           }, { context: 'Martex quick search submit', maxRetries: 1 });
@@ -318,20 +319,17 @@ export class MartexProvider implements SupplierProvider {
 
         await dismissCookieBanner(page);
 
-        await page.waitForSelector('.partscontrol-box', { timeout: 15000 }).catch(() => {});
-        await page.waitForFunction(() => {
-          const boxes = document.querySelectorAll('.partscontrol-box');
-          return Array.from(boxes).some(box => /Gross price|Cena brutto|Central|Centrala|pcs|szt/i.test(box.textContent || ''));
-        }, { timeout: 8000 }).catch(() => {});
-        const priceSelector = '.partscontrol-box-articles-price-gross';
-        const priceReady = await page.waitForSelector(priceSelector, { timeout: 5000 }).catch(() => null);
-        if (!priceReady) {
-          await page.waitForFunction((selector: string) => {
-            const el = document.querySelector(selector);
-            return el && el.textContent && el.textContent.trim().length > 0;
-          }, priceSelector, { timeout: 5000 }).catch(() => {});
+        // Wait for results with a short timeout; only wait for prices if results are actually present.
+        // This avoids 14s of cascading timeouts when there are no results for the query.
+        const hasResults = await page.waitForSelector('.partscontrol-box', { timeout: 3000 }).catch(() => null);
+        if (hasResults) {
+          await page.waitForFunction(() => {
+            const boxes = document.querySelectorAll('.partscontrol-box');
+            return Array.from(boxes).some(box => /Gross price|Cena brutto|Central|Centrala|pcs|szt/i.test(box.textContent || ''));
+          }, { timeout: 3000 }).catch(() => {});
+          await page.waitForSelector('.partscontrol-box-articles-price-gross', { timeout: 2000 }).catch(() => {});
+          await page.waitForTimeout(300);
         }
-        await page.waitForTimeout(1000);
       };
 
       await ensureLoggedIn();

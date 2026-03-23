@@ -18,7 +18,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         });
 
         if (res.ok) {
-          setIsAuthenticated(true);
+          const data = await res.json();
+          if (data.role !== 'admin') {
+            router.push('/');
+          } else {
+            setIsAuthenticated(true);
+          }
         } else {
           router.push('/login');
         }
@@ -38,7 +43,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Checking authentication...</p>
+          <p className="mt-4 text-gray-600">A verificar autenticação...</p>
         </div>
       </div>
     );

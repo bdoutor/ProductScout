@@ -7,6 +7,7 @@ import { loadSessionCache, saveSessionCache, clearSessionCache } from '../utils/
 import { withRetry } from '../utils/retry-helper';
 import fs from 'fs';
 import path from 'path';
+import { getSupplierKey, getSupplierSessionCacheKey } from '../utils/supplier-utils';
 
 type CookieParam = {
   name: string;
@@ -388,9 +389,7 @@ async function loginViaAjax(
 
 export class NipocarProvider implements SupplierProvider {
   supports(supplier: Supplier): boolean {
-    const name = supplier.name?.toLowerCase() || '';
-    const base = supplier.base_url?.toLowerCase() || '';
-    return name.includes('nipocar') || base.includes('nipocar.pt');
+    return getSupplierKey(supplier) === 'nipocar';
   }
 
   async loginAndFetch(
@@ -400,7 +399,7 @@ export class NipocarProvider implements SupplierProvider {
     timeoutMs: number = parseInt(process.env.PLAYWRIGHT_NAV_TIMEOUT_MS || '25000', 10)
   ): Promise<ProviderFetchResult> {
     const result: ProviderFetchResult = { html: '', status: 500 };
-    const cacheKey = `nipocar-${supplier.id || supplier.name || 'default'}`;
+    const cacheKey = getSupplierSessionCacheKey(supplier);
     const baseUrl = (supplier.base_url || 'https://nipocar.pt').replace(/\/$/, '');
     const loginUrl = (supplier as any).login_url || credential.url || `${baseUrl}/pt-pt/login`;
     const targetUrl = searchUrl || supplier.search_url_template?.replace('{query}', '') || baseUrl;
@@ -426,22 +425,29 @@ export class NipocarProvider implements SupplierProvider {
       page = await context.newPage();
       page.setDefaultTimeout(timeoutMs);
 
-      // Quick session check
-      try {
-        await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-        await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
-        await closePopupIfAny(page);
-        const cachedState = await getAuthState(page);
-        if (cachedState.loggedIn) {
-          logger.info('[NipocarProvider] Reusing cached session');
-        } else {
-          logger.debug('[NipocarProvider] cached session invalid: %j', cachedState);
-          throw new Error('SESSION_INVALID');
+      // Session check: if cookies exist, go directly to targetUrl (saves one full homepage navigation).
+      // If session is invalid, fall through to the full login flow.
+      let alreadyOnSearchPage = false;
+      if (cachedCookies) {
+        try {
+          await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+          await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
+          await closePopupIfAny(page);
+          const cachedState = await getAuthState(page);
+          if (cachedState.loggedIn) {
+            logger.info('[NipocarProvider] Reusing cached session (direct to search page)');
+            alreadyOnSearchPage = true;
+          } else {
+            logger.debug('[NipocarProvider] cached session invalid: %j', cachedState);
+            throw new Error('SESSION_INVALID');
+          }
+        } catch {
+          clearSessionCache(cacheKey);
+          await context.clearCookies();
         }
-      } catch {
-        clearSessionCache(cacheKey);
-        await context.clearCookies();
+      }
 
+      if (!alreadyOnSearchPage) {
         // Try PT login first; if it fails, try EN login (site sometimes forces locale)
         const loginUrls = [
           loginUrl,
@@ -549,15 +555,15 @@ export class NipocarProvider implements SupplierProvider {
           await saveNipocarSnapshot(page, 'login-failed');
           throw new Error(`LOGIN_FAILED: invalid credentials or blocked (state=${JSON.stringify(finalAuthState)})`);
         }
-      }
 
-      await withRetry(
-        () => page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs }),
-        { context: 'Nipocar search navigation', maxRetries: 1 }
-      ).catch(() => {});
-      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(800);
-      await closePopupIfAny(page);
+        await withRetry(
+          () => page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs }),
+          { context: 'Nipocar search navigation', maxRetries: 1 }
+        ).catch(() => {});
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(800);
+        await closePopupIfAny(page);
+      }
 
     if (queryValue) {
       await performReferenceSearch(page, queryValue);

@@ -1,13 +1,14 @@
-// @ts-nocheck
 import axios, { AxiosError } from 'axios';
-import * as cheerio from 'cheerio';
 import { Supplier, ProductItem, SearchRun, ErrorType } from '../types';
-import { parseHtml, parsePrice, parseAvailability, extractAbsoluteUrl } from '../utils/parser';
-import { supabase } from '../utils/supabase';
+import { parseHtml, parseNipocar } from '../utils/parser';
 import { looksLikeRobotBlock } from '../utils/fetch-helpers';
-import { decryptPassword } from '../utils/secrets';
+import { logger } from '../utils/logger';
 import { getProviderForSupplier } from '../providers';
-import { getBrowser } from '../providers/playwright';
+import { isAuthenticatedEvoPartsHtml, fetchEvoPartsFromCachedSession } from '../providers/evoparts';
+import { resolveRuntimeCredential } from './supplier-runtime';
+import { getSupplierKey } from '../utils/supplier-utils';
+import { persistSearchRun, storeDebugSnapshot, updateDebugSnapshotUrl } from './search-run-repository';
+import { getSupplierAuthStateCached } from './supplier-auth';
 
 /**
  * Fetch page using HTTP mode
@@ -73,33 +74,15 @@ async function fetchRender(url: string, timeout: number = 20000, waitTime: numbe
   };
 }
 
-/**
- * Store debug snapshot in Supabase Storage
- */
-async function storeDebugSnapshot(runId: string, html: string): Promise<string | null> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutRef: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutRef = setTimeout(() => reject(new Error(`${label}_TIMEOUT`)), timeoutMs);
+  });
   try {
-    const fileName = `search-runs/${runId}/results.html`;
-    const { data, error } = await supabase.storage
-      .from('debug-snapshots')
-      .upload(fileName, html, {
-        contentType: 'text/html',
-        upsert: true
-      });
-
-    if (error) {
-      console.error('Failed to upload debug snapshot:', error);
-      return null;
-    }
-
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from('debug-snapshots')
-      .getPublicUrl(fileName);
-
-    return urlData.publicUrl;
-  } catch (err) {
-    console.error('Error storing debug snapshot:', err);
-    return null;
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutRef) clearTimeout(timeoutRef);
   }
 }
 
@@ -132,80 +115,13 @@ function classifyError(error: any): { type: ErrorType; message: string } {
 }
 
 /**
- * Custom parser for Nipocar cards
- */
-function parseNipocar(html: string, supplier: Supplier): ProductItem[] {
-  const $ = cheerio.load(html);
-  const items: ProductItem[] = [];
-  const baseUrl = supplier.base_url || 'https://nipocar.pt';
-
-  $('.winsig_product_item_list_custom').each((_, el) => {
-    const container = $(el);
-
-    const name = container.find('.product_name').first().text().trim() || container.find('.se-item-reference').first().text().trim() || '';
-    const code = container.find('.se-item-reference a').first().text().trim() || container.find('input[id^="input_qtd_"]').attr('ref') || null;
-
-    const priceTextCandidates = [
-      container.find('.price_two span').first().text(),
-      container.find('.price_two.value.price span').first().text(),
-      container.find('.productListNoIvaPrice .price span').first().text(),
-      container.find('.price_two').first().text(),
-      container.find('[class*=price]').first().text()
-    ]
-      .map(t => t?.trim().replace(/\s+/g, ' '))
-      .filter(Boolean);
-
-    let price: number | null = null;
-    for (const pt of priceTextCandidates) {
-      const p = parsePrice(pt);
-      if (p !== null) { price = p; break; }
-    }
-
-    if (price === null) {
-      const onclick = container.find('button[onclick*="add_to_cart_Advance3"]').attr('onclick') || '';
-      const m = onclick.match(/add_to_cart_Advance3\([^,]+,'([^']+)'/);
-      const payload = m ? m[1] : null;
-      if (payload) {
-        const parts = payload.split('_P_');
-        if (parts.length >= 3) {
-          const p = parsePrice(parts[2]);
-          if (p !== null) price = p;
-        }
-      }
-    }
-
-    if (price === null) {
-      const text = container.text() || '';
-            const currencyRegex = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*(?:\u20ac|€|eur|euro)/gi;
-      let m;
-      while ((m = currencyRegex.exec(text)) !== null) {
-        const p = parsePrice(m[1]);
-        if (p !== null) { price = p; break; }
-      }
-    }
-
-    const hasStockGreen = container.find('.stockgroup .stock.green').length > 0;
-    const availability = hasStockGreen ? 1 : 0;
-    const availability_label = hasStockGreen ? 'In stock' : 'Out of stock';
-
-    const href = container.find('.se-item-reference a').attr('href') || '';
-    const url = extractAbsoluteUrl(href, baseUrl) || baseUrl;
-
-    items.push({ name, code, price, availability, availability_label, delivery: null, url, store: supplier.name });
-  });
-
-  return items;
-}
-
-
-
-/**
  * Scrape a single supplier for the given query
  */
 export async function scrapeSupplier(
   supplier: Supplier,
   query: string,
-  debug: boolean = false
+  debug: boolean = false,
+  providedCredential: any = null
 ): Promise<{ items: ProductItem[]; searchRun: SearchRun }> {
   const startTime = Date.now();
   const searchUrl = supplier.search_url_template.replace('{query}', encodeURIComponent(query));
@@ -221,355 +137,128 @@ export async function scrapeSupplier(
   let html = '';
   let httpStatus: number | null = null;
   let items: ProductItem[] = [];
-  let itemsPrefetched: ProductItem[] | null = null;
+  const persistErrorSnapshots =
+    process.env.STORE_ERROR_SNAPSHOTS === '1' ||
+    process.env.STORE_ERROR_SNAPSHOTS === 'true';
 
   try {
     // Step 1: Fetch page
     const searchStart = Date.now();
-    const fetchTimeout = supplier.timeouts?.search || (supplier.mode === 'http' ? 10000 : 15000);
+    const supplierKey = getSupplierKey(supplier);
+
+    // Fast-exit: if GSMART session is expired, skip Playwright entirely (saves ~50s)
+    if (supplierKey === 'gsmart' && supplier.id) {
+      const gsmartState = getSupplierAuthStateCached(supplier.id);
+      if (gsmartState === 'MANUAL_REQUIRED') {
+        throw new Error('CAPTCHA_REQUIRED: GSMART manual session required — use the login button to renew');
+      }
+    }
+
+    const isEvoParts = supplierKey === 'evoparts';
+    const defaultFetchTimeout = supplier.timeouts?.search || (supplier.mode === 'http' ? 10000 : 15000);
+    const fetchTimeout = isEvoParts ? Math.max(defaultFetchTimeout, 25000) : defaultFetchTimeout;
 
   // Try dedicated provider first (e.g., Nipocar, Martex custom flows)
   const provider = getProviderForSupplier(supplier);
-  const preferProvider = supplier.name.toLowerCase().includes('nipocar');
-  // Resolve credentials either from Supabase or inline supplier fields (or env fallback)
-  let runtimeCred: any = null;
-  if (supabase) {
-    try {
-      const { data: providerCred } = await supabase
-        .from('supplier_credentials')
-          .select('*')
-          .eq('name', supplier.name)
-          .eq('active', true)
-          .single();
-        if (providerCred && providerCred.login && providerCred.password) {
-          runtimeCred = {
-            ...providerCred,
-            password: decryptPassword(String(providerCred.password)),
-          };
-        }
-      } catch (e) {
-        console.error(`[${supplier.name}] provider creds fetch failed`, e?.message || e);
-    }
-  }
-  if (!runtimeCred && supplier.login && supplier.password) {
-    runtimeCred = {
-      login: supplier.login,
-      password: supplier.password,
-      url: supplier.login_url || supplier.url || supplier.base_url,
-      name: supplier.name,
-      active: true,
-    };
-  }
-  // Env fallback (e.g., Nipocar credentials configured in .env)
-  if (
-    !runtimeCred &&
-    process.env.NIPOCAR_LOGIN &&
-    process.env.NIPOCAR_PASSWORD &&
-    supplier.name.toLowerCase().includes('nipocar')
-  ) {
-    runtimeCred = {
-      login: process.env.NIPOCAR_LOGIN,
-      password: process.env.NIPOCAR_PASSWORD,
-      url: supplier.login_url || supplier.url || supplier.base_url,
-      name: supplier.name,
-      active: true,
-    };
-  }
+  const preferProvider = supplierKey === 'nipocar';
+  const evoPartsCacheKey = `evoparts-${supplier.id || supplier.name || 'default'}`;
+  const runtimeCred = providedCredential || await resolveRuntimeCredential(supplier);
 
-  if (provider && runtimeCred && (preferProvider || !html)) {
+  let providerFailure: Error | null = null;
+  const canUseProviderWithoutCreds = supplierKey === 'gsmart';
+  if (provider && (runtimeCred || canUseProviderWithoutCreds) && (preferProvider || !html)) {
     try {
-      const providerResult = await provider.loginAndFetch(supplier, runtimeCred, searchUrl, fetchTimeout);
-      if (providerResult.html && !providerResult.html.includes('id="Login"')) {
+      const providerResult = await withTimeout(
+        provider.loginAndFetch(supplier, (runtimeCred || ({} as any)) as any, searchUrl, fetchTimeout),
+        fetchTimeout + 30000,
+        `${supplier.name.toUpperCase()}_PROVIDER`
+      );
+      if (providerResult.error) {
+        providerFailure = providerResult.error;
+      }
+      const providerHtmlLooksAuthenticated = isEvoParts
+        ? isAuthenticatedEvoPartsHtml(providerResult.html || '')
+        : providerResult.html && !providerResult.html.includes('id="Login"');
+      if (providerHtmlLooksAuthenticated) {
         html = providerResult.html;
         httpStatus = providerResult.status;
           searchRun.engine = 'render';
         }
-      } catch (e) {
-        console.error(`[${supplier.name}] provider fetch failed`, e?.message || e);
+      } catch (e: any) {
+        providerFailure = e as Error;
+        logger.error('[%s] provider fetch failed: %s', supplier.name, e?.message || e);
       }
+    }
+
+    if (
+      supplierKey === 'gsmart' &&
+      providerFailure &&
+      String(providerFailure.message || '').startsWith('CAPTCHA_REQUIRED')
+    ) {
+      throw providerFailure;
     }
 
     let fetchResult: { html: string; status: number };
     let usedRenderFallback = false;
+    let usedProviderSession = false;
+    if (html && !html.includes('id="Login"')) {
+      usedProviderSession = !isEvoParts || isAuthenticatedEvoPartsHtml(html);
+    }
 
-    if (supplier.mode === 'http') {
-      // Try HTTP first
-      fetchResult = await fetchHttp(searchUrl, fetchTimeout);
-      html = fetchResult.html;
-      httpStatus = fetchResult.status;
-
-      // Check if it looks like we're being blocked
-      if (looksLikeRobotBlock(html)) {
-        console.log(`[${supplier.name}] HTTP appears blocked, attempting render fallback...`);
-
-        // Try render mode as fallback if Firecrawl is configured
-        if (process.env.FIRECRAWL_API_KEY) {
-          try {
-            const renderTimeout = supplier.timeouts?.search || 20000;
-            const waitTime = 5000; // Increased wait time for JS-heavy sites
-            fetchResult = await fetchRender(searchUrl, renderTimeout, waitTime);
-            html = fetchResult.html;
-            httpStatus = fetchResult.status;
-            usedRenderFallback = true;
-            searchRun.engine = 'render'; // Update engine in run metadata
-            console.log(`[${supplier.name}] Successfully fetched using render fallback`);
-          } catch (renderError: any) {
-            console.error(`[${supplier.name}] Render fallback also failed:`, renderError.message);
-            // Continue with original HTML and let the normal error handling process it
-          }
-        } else {
-          console.warn(`[${supplier.name}] FIRECRAWL_API_KEY not configured, cannot use render fallback`);
-        }
+    if (!usedProviderSession && isEvoParts) {
+      const cachedResult = await fetchEvoPartsFromCachedSession(evoPartsCacheKey, searchUrl, fetchTimeout);
+      if (cachedResult.html) {
+        html = cachedResult.html;
+        httpStatus = cachedResult.status;
+        searchRun.engine = 'http';
+        usedProviderSession = true;
       }
-    } else {
-      // Render mode: first try Playwright login flow for Auger when enabled
-      const pwEnabled = process.env.ENABLE_PLAYWRIGHT_LOGIN === '1' || process.env.ENABLE_PLAYWRIGHT_LOGIN === 'true';
-      if (pwEnabled && supplier.name.toLowerCase().includes('auger')) {
-        try {
-          // Login + search load
-          const { data: cred } = await supabase
-            .from('supplier_credentials')
-            .select('*')
-            .eq('name', supplier.name)
-            .eq('active', true)
-            .single();
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const browser = await getBrowser();
-          const context = await browser.newContext({ viewport: { width: 1366, height: 860 } });
-          const page = await context.newPage();
-          page.setDefaultTimeout(20000);
-          if (cred && cred.login && cred.password) {
-            const loginUrl: string = (supplier as any).login_url || cred.url || supplier.base_url;
-            await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
-            try { const c = await page.$('.modalOverlay .close, button.close'); if (c) await c.click({ force: true }); } catch {}
-            await page.fill('input[name="emailAddress"]', String(cred.login));
-            await page.fill('input[name="password"]', decryptPassword(String(cred.password)));
-            try { await page.click('.btn-login', { force: true }); } catch {}
-            await Promise.race([
-              page.waitForSelector('#Login', { state: 'detached' }),
-              page.waitForTimeout(8000),
-            ]);
-            // Try to toggle price visibility to "Mostrar"
-            try {
-              const priceCtl = await page.$('text=Preço');
-              if (priceCtl) {
-                await priceCtl.click({ force: true });
-                await page.waitForTimeout(200);
-                const showOpt = await page.$('text=Mostrar');
-                if (showOpt) { await showOpt.click({ force: true }); await page.waitForTimeout(400); }
-              } else {
-                const btnShow = await page.$('button:has-text("Mostrar")');
-                if (btnShow) { await btnShow.click({ force: true }); await page.waitForTimeout(400); }
-              }
-            } catch {}
-          }
-          await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
-          try { await page.waitForSelector('a[href*="product-detail"]', { timeout: 20000 }); } catch {}
-          await page.waitForTimeout(800);
-          // Safety: try toggling price on search page too (some UIs need it per view)
-          try {
-            const priceCtl2 = await page.$('text=Preço');
-            if (priceCtl2) {
-              await priceCtl2.click({ force: true });
-              await page.waitForTimeout(200);
-              const showOpt2 = await page.$('text=Mostrar');
-              if (showOpt2) { await showOpt2.click({ force: true }); await page.waitForTimeout(400); }
-            }
-          } catch {}
-          try {
-            const raw = await page.evaluate(() => {
-              function nearest(el, selectors) {
-                const list = selectors.split(',');
-                let cur = el;
-                for (let depth = 0; depth < 6 && cur; depth++) {
-                  for (const s of list) {
-                    const hit = cur.closest(s.trim());
-                    if (hit) return hit;
-                  }
-                  cur = cur.parentElement;
-                }
-                return null;
-              }
-              function extractEuro(text) {
-                if (!text) return null;
-                // Common patterns: €3,50 | 3,50 € | EUR 3,50
-                const m = text.match(/[€\u20AC]\s*([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)|([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)\s*[€\u20AC]/);
-                if (!m) return null;
-                return (m[1] || m[2] || '').trim();
-              }
-              const anchors = Array.from(document.querySelectorAll('a[href*="product-detail"]'));
-              const out = [];
-              for (const a of anchors) {
-                const name = (a.textContent || '').trim();
-                const card = nearest(a, '.product-item, .product, .product-card, .card, .products-item');
-                let price = null, availability = null;
-                if (card) {
-                  // 1) Direct price nodes
-                  const priceEl = card.querySelector('.price, .product-price, [class*="price" i]');
-                  if (priceEl) price = priceEl.textContent?.trim() || null;
-                  // 2) Label-based: "Preço líquido único"
-                  if (!price) {
-                    const labels = Array.from(card.querySelectorAll('*')).filter(el => /pre[cç]o/i.test(el.textContent||''));
-                    for (const lbl of labels) {
-                      const txt = (lbl.textContent||'').trim();
-                      if (/pre[cç]o\s*l[ií]quido\s*[uú]nico/i.test(txt)) {
-                        // Try sibling or same node
-                        const sib = lbl.nextElementSibling as HTMLElement | null;
-                        if (sib && sib.textContent) {
-                          const eur = extractEuro(sib.textContent);
-                          if (eur) { price = eur; break; }
-                        }
-                        const eur2 = extractEuro(lbl.textContent);
-                        if (eur2) { price = eur2; break; }
-                      }
-                    }
-                  }
-                  // 3) Fallback: scan entire card text for euro amount
-                  if (!price) {
-                    const eur3 = extractEuro((card as HTMLElement).innerText || '');
-                    if (eur3) price = eur3;
-                  }
-                  const availEl = card.querySelector('[class*="stock" i], [class*="estoque" i], [class*="unidade" i]');
-                  if (availEl) availability = availEl.textContent?.trim() || null;
-                }
-                out.push({ name, href: a.getAttribute('href') || '', price, availability });
-              }
-              return out;
-            });
-            itemsPrefetched = (raw || [])
-              .filter((r: any) => r && r.name && r.href)
-              .map((r: any) => ({
-                name: String(r.name),
-                code: null,
-                price: parsePrice(String(r.price || '')),
-                availability: parseAvailability(String(r.availability || '')),
-                delivery: null,
-                url: extractAbsoluteUrl(String(r.href), searchUrl),
-                store: supplier.name,
-              } as ProductItem));
-            // If still no prices, retry evaluation once more after slight reload
-            const anyPrice = itemsPrefetched.some(i => i.price !== null && i.price !== undefined);
-            if (!anyPrice) {
-              try {
-                await page.reload({ waitUntil: 'domcontentloaded' });
-                await page.waitForTimeout(800);
-                const raw2 = await page.evaluate(() => {
-                  function nearest(el, selectors) {
-                    const list = selectors.split(',');
-                    let cur = el;
-                    for (let depth = 0; depth < 6 && cur; depth++) {
-                      for (const s of list) {
-                        const hit = cur.closest(s.trim());
-                        if (hit) return hit;
-                      }
-                      cur = cur.parentElement;
-                    }
-                    return null;
-                  }
-                  function extractEuro(text) {
-                    if (!text) return null;
-                    const m = text.match(/[€\u20AC]\s*([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)|([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)\s*[€\u20AC]/);
-                    if (!m) return null;
-                    return (m[1] || m[2] || '').trim();
-                  }
-                  const anchors = Array.from(document.querySelectorAll('a[href*="product-detail"]'));
-                  const out = [];
-                  for (const a of anchors) {
-                    const name = (a.textContent || '').trim();
-                    const card = nearest(a, '.product-item, .product, .product-card, .card, .products-item');
-                    let price = null, availability = null;
-                    if (card) {
-                      const priceEl = card.querySelector('.price, .product-price, [class*="price" i]');
-                      if (priceEl) price = priceEl.textContent?.trim() || null;
-                      if (!price) {
-                        const labels = Array.from(card.querySelectorAll('*')).filter(el => /pre[cç]o/i.test(el.textContent||''));
-                        for (const lbl of labels) {
-                          const txt = (lbl.textContent||'').trim();
-                          if (/pre[cç]o\s*l[ií]quido\s*[uú]nico/i.test(txt)) {
-                            const sib = lbl.nextElementSibling;
-                            if (sib && (sib.textContent||'')) {
-                              const eur = extractEuro(sib.textContent||'');
-                              if (eur) { price = eur; break; }
-                            }
-                            const eur2 = extractEuro(lbl.textContent||'');
-                            if (eur2) { price = eur2; break; }
-                          }
-                        }
-                      }
-                      if (!price) {
-                        const eur3 = extractEuro((card).innerText || '');
-                        if (eur3) price = eur3;
-                      }
-                      const availEl = card.querySelector('[class*="stock" i], [class*="estoque" i], [class*="unidade" i]');
-                      if (availEl) availability = availEl.textContent?.trim() || null;
-                    }
-                    out.push({ name, href: a.getAttribute('href') || '', price, availability });
-                  }
-                  return out;
-                });
-                const pref2 = (raw2 || [])
-                  .filter((r: any) => r && r.name && r.href)
-                  .map((r: any) => ({
-                    name: String(r.name),
-                    code: null,
-                    price: parsePrice(String(r.price || '')),
-                    availability: parseAvailability(String(r.availability || '')),
-                    delivery: null,
-                    url: extractAbsoluteUrl(String(r.href), searchUrl),
-                    store: supplier.name,
-                  } as ProductItem));
-                if (pref2 && pref2.length) itemsPrefetched = pref2;
-              } catch {}
-            }
-            // Enrich items without price from detail pages up to limit
-            try {
-              const limitPerSupplier = parseInt(process.env.SUPPLIER_ITEM_LIMIT || '10', 10);
-              const maxDetail = parseInt(process.env.SUPPLIER_DETAIL_LIMIT || '10', 10);
-              const needPriced = Math.max(0, limitPerSupplier);
-              const pricedCount0 = (itemsPrefetched || []).filter(i => i.price !== null && i.price !== undefined).length;
-              if (itemsPrefetched && pricedCount0 < needPriced) {
-                const without = itemsPrefetched.filter(i => i.price === null || i.price === undefined);
-                let fetched = 0;
-                for (const item of without) {
-                  if (fetched >= maxDetail) break;
-                  try {
-                    const tab = await context.newPage();
-                    tab.setDefaultTimeout(40000);
-                    await tab.goto(item.url, { waitUntil: 'domcontentloaded' });
-                    try { await tab.waitForSelector('.price, .product-price, [class*="price" i]', { timeout: 8000 }); } catch {}
-                    const detail = await tab.evaluate(() => {
-                      const priceEl = document.querySelector('.price, .product-price, [class*="price" i]');
-                      const stockEl = document.querySelector('[class*="stock" i], [class*="estoque" i], [class*="unidade" i]');
-                      return {
-                        price: (priceEl?.textContent||'').trim() || null,
-                        availability: (stockEl?.textContent||'').trim() || null,
-                      };
-                    });
-                    item.price = parsePrice(detail.price);
-                    const avn = parseAvailability(detail.availability);
-                    if (avn !== null) item.availability = avn;
-                    await tab.close();
-                    fetched++;
-                    const pricedNow = itemsPrefetched.filter(i => i.price !== null && i.price !== undefined).length;
-                    if (pricedNow >= needPriced) break;
-                  } catch {}
-                }
-              }
-            } catch {}
-          } catch {}
-          html = await page.content();
-          httpStatus = 200;
-          await context.close();
-        } catch (e: any) {
-          console.warn('[AUGER] Playwright flow failed:', e?.message || e);
-        }
-      }
+    }
 
-      if (!html) {
-        // Fallback to Firecrawl render
-        fetchResult = await fetchRender(searchUrl, fetchTimeout);
+    if (usedProviderSession && isEvoParts && !isAuthenticatedEvoPartsHtml(html)) {
+      html = '';
+      httpStatus = null;
+      usedProviderSession = false;
+    }
+
+    if (!usedProviderSession) {
+      if (supplier.mode === 'http') {
+        // Try HTTP first
+        fetchResult = await fetchHttp(searchUrl, fetchTimeout);
         html = fetchResult.html;
         httpStatus = fetchResult.status;
+
+        // Check if it looks like we're being blocked
+        if (looksLikeRobotBlock(html)) {
+          logger.warn('[%s] HTTP appears blocked, attempting render fallback...', supplier.name);
+
+          // Try render mode as fallback if Firecrawl is configured
+          if (process.env.FIRECRAWL_API_KEY) {
+            try {
+              const renderTimeout = supplier.timeouts?.search || 20000;
+              const waitTime = 5000; // Increased wait time for JS-heavy sites
+              fetchResult = await fetchRender(searchUrl, renderTimeout, waitTime);
+              html = fetchResult.html;
+              httpStatus = fetchResult.status;
+              usedRenderFallback = true;
+              searchRun.engine = 'render'; // Update engine in run metadata
+              logger.info('[%s] Successfully fetched using render fallback', supplier.name);
+            } catch (renderError: any) {
+              logger.error('[%s] Render fallback also failed: %s', supplier.name, renderError.message);
+              // Continue with original HTML and let the normal error handling process it
+            }
+          } else {
+            logger.warn('[%s] FIRECRAWL_API_KEY not configured, cannot use render fallback', supplier.name);
+          }
+        }
+      } else {
+        // Render mode: AugerProvider handles Playwright login via the provider path above.
+        // Fall back to Firecrawl render for any render-mode supplier without a provider session.
+        if (!html) {
+          fetchResult = await fetchRender(searchUrl, fetchTimeout);
+          html = fetchResult.html;
+          httpStatus = fetchResult.status;
+        }
       }
     }
 
@@ -579,7 +268,7 @@ export async function scrapeSupplier(
     // 1. We used HTTP mode (not render)
     // 2. We didn't successfully use render fallback
     // If we used render mode or render fallback successfully, trust that it bypassed blocks
-    const shouldCheckBlock = (supplier.mode === 'http' && !usedRenderFallback);
+    const shouldCheckBlock = (supplier.mode === 'http' && !usedRenderFallback && !usedProviderSession);
 
     if (shouldCheckBlock && (looksLikeRobotBlock(html))) {
       throw new Error('BLOCKED_BY_ROBOT: Page appears to be blocking automated access');
@@ -587,11 +276,9 @@ export async function scrapeSupplier(
 
     // Step 2: Parse items
     const extractStart = Date.now();
-    if (itemsPrefetched && itemsPrefetched.length > 0) {
-      items = itemsPrefetched;
-    } else {
+    {
       const supplierForParse: any = { ...supplier };
-      if (supplier.name.toLowerCase().includes('auger')) {
+      if (supplierKey === 'auger') {
         supplierForParse.selectors = supplierForParse.selectors || {};
         supplierForParse.selectors.result_selectors = supplierForParse.selectors.result_selectors || {};
         supplierForParse.selectors.result_selectors.item = 'a[href*="product-detail"]';
@@ -599,30 +286,34 @@ export async function scrapeSupplier(
         supplierForParse.selectors.result_selectors.link = 'self' as any;
         supplierForParse.selectors.result_selectors.price = supplierForParse.selectors.result_selectors.price || '.price';
       }
-    if (supplier.name.toLowerCase().includes('nipocar')) {
-      items = parseNipocar(html, supplierForParse);
+      if (supplierKey === 'nipocar') {
+        items = parseNipocar(html, supplierForParse);
 
-      // Fallback: if all Nipocar items came without price, try provider (rendered) fetch once
-      const allPricesNull = items.length > 0 && items.every(i => i.price === null || i.price === undefined);
-      if (allPricesNull && provider && runtimeCred) {
-        try {
-          const providerResult = await provider.loginAndFetch(supplier, runtimeCred, searchUrl, fetchTimeout);
-          if (providerResult.html) {
-            html = providerResult.html;
-            items = parseNipocar(html, supplierForParse);
+        // Fallback: if all Nipocar items came without price, try provider (rendered) fetch once
+        const allPricesNull = items.length > 0 && items.every(i => i.price === null || i.price === undefined);
+        if (allPricesNull && provider && runtimeCred) {
+          try {
+            const providerResult = await withTimeout(
+              provider.loginAndFetch(supplier, runtimeCred, searchUrl, fetchTimeout),
+              fetchTimeout + 30000,
+              `${supplier.name.toUpperCase()}_PROVIDER`
+            );
+            if (providerResult.html) {
+              html = providerResult.html;
+              items = parseNipocar(html, supplierForParse);
+            }
+          } catch (e: any) {
+            logger.warn('[Nipocar] fallback provider fetch failed: %s', e?.message || e);
           }
-        } catch (e) {
-          console.warn('[Nipocar] fallback provider fetch failed', e?.message || e);
         }
-      }
 
-      if (items.length === 0) {
+        if (items.length === 0) {
+          items = parseHtml(html, supplierForParse);
+        }
+      } else {
         items = parseHtml(html, supplierForParse);
       }
-    } else {
-      items = parseHtml(html, supplierForParse);
     }
-  }
     const extractDuration = Date.now() - extractStart;
 
     // Zero results is a valid outcome (e.g., referência inexistente); do not throw.
@@ -644,11 +335,17 @@ export async function scrapeSupplier(
   } catch (error: any) {
     const totalDuration = Date.now() - startTime;
     const { type, message } = classifyError(error);
+    const rawErrorMessage = String(error?.message || '');
+    const isGsmartSupplier = getSupplierKey(supplier) === 'gsmart';
+    const isGsmartSessionExpired = isGsmartSupplier && rawErrorMessage.startsWith('CAPTCHA_REQUIRED');
 
     searchRun.status = 'error';
     searchRun.http_status_search = httpStatus;
 
-    if (error.message?.startsWith('BLOCKED_BY_ROBOT')) {
+    if (isGsmartSessionExpired) {
+      searchRun.step_failed = 'search';
+      searchRun.error_message = 'GSMART_SESSION_EXPIRED';
+    } else if (error.message?.startsWith('BLOCKED_BY_ROBOT')) {
       searchRun.step_failed = 'search';
       searchRun.error_message = ErrorType.BLOCKED_BY_ROBOT;
     } else if (error.message?.startsWith('PARSING_ERROR')) {
@@ -665,37 +362,26 @@ export async function scrapeSupplier(
       searchRun.error_message = ErrorType.UNKNOWN_ERROR;
     }
 
-    searchRun.error_details = error?.stack || message;
+    if (isGsmartSessionExpired) {
+      searchRun.error_details =
+        'GSMART session expired or missing. Run `cd backend && npm run gsmart:init-session`, solve the captcha in the opened browser, then retry the search.';
+    } else {
+      searchRun.error_details = error?.stack || message;
+    }
     searchRun.durations = {
       total_ms: totalDuration
     };
   }
 
-  // Store in database
-  const { data: insertedRun, error: dbError } = await supabase
-    .from('search_runs')
-    .insert(searchRun)
-    .select()
-    .single();
-
-  if (dbError) {
-    console.error('Failed to insert search_run:', dbError);
-  } else {
-    searchRun.id = insertedRun.id;
-    searchRun.created_at = insertedRun.created_at;
-  }
+  // Persist to database
+  await persistSearchRun(searchRun);
 
   // Store debug snapshot if requested or on error
-  if ((debug || searchRun.status === 'error') && html && searchRun.id) {
+  if ((debug || (persistErrorSnapshots && searchRun.status === 'error')) && html && searchRun.id) {
     const snapshotUrl = await storeDebugSnapshot(searchRun.id, html);
     if (snapshotUrl) {
       searchRun.debug_snapshot_url = snapshotUrl;
-
-      // Update database with snapshot URL
-      await supabase
-        .from('search_runs')
-        .update({ debug_snapshot_url: snapshotUrl })
-        .eq('id', searchRun.id);
+      await updateDebugSnapshotUrl(searchRun.id, snapshotUrl);
     }
   }
 

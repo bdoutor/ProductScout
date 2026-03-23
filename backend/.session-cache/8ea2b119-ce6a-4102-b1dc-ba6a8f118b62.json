@@ -1,32 +1,32 @@
 {
-  "timestamp": 1771337439356,
+  "timestamp": 1772036626236,
   "cookies": [
     {
       "name": "_ga",
-      "value": "GA1.1.1653517721.1771335171",
+      "value": "GA1.1.108427762.1772036386",
       "domain": ".iamauger.com",
       "path": "/",
-      "expires": 1805897434.315061,
+      "expires": 1806596618.237904,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
     },
     {
       "name": "token",
-      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJDdXN0b21lcklkIjoiZGY2NzY0ZTYtNzUyZi00MmYzLWI0MmUtMjc2OTdmZmYzYTBkIiwiQ3VzdG9tZXJDb2RlIjoiMDAwMTIwMTYyOSIsIk5ld0N1c3RvbWVyQ29kZSI6IiIsIlJlbGF0ZWRQZXJzb25JZCI6IjVmY2MyZDA1LWI2YzMtNGUwZC1iNGEwLTdkOTdhMTA3OTNlNyIsIkN1c3RvbWVyTmFtZTEiOiJFVVJPQ09NUE9ORU5URVMsIExEQSIsIkN1c3RvbWVyTmFtZTIiOiIiLCJSZWxhdGVkUGVyc29uTmFtZTEiOiJWQUxERU1BUiIsIlJlbGF0ZWRQZXJzb25OYW1lMiI6IkNSQVZFSVJPIiwiQ291bnRyeUNvZGUiOiJQVCIsIkVtYWlsQWRkcmVzcyI6InZhbGRlbWFyQGV1cm9jb21wb25lbnRlcy5wdCIsIklzR3JvdXBDdXN0b21lciI6IjAiLCJTcHJhcyI6IlAiLCJMYW5ndSI6IlAiLCJMYW5ndWFnZSI6InB0LVBUIiwiYXVkIjpbIlNhbXBhLkIyQi5CYWNrb2ZmaWNlLldlYiIsIlNhbXBhLkIyQi5BY2NvdW50LkFwaSIsIlNhbXBhLkIyQi5CYXNrZXQuQXBpIiwiU2FtcGEuQjJCLkNhdGFsb2cuQXBpIiwiU2FtcGEuQjJCLkN1bHR1cmUuQXBpIiwiU2FtcGEuQjJCLk9yZGVyLkFwaSIsIlNhbXBhLkIyQi5QcmljZS5BcGkiLCJTYW1wYS5CMkIuU2VhcmNoLkFwaSIsIlNhbXBhLkIyQi5TdXJ2ZXkuQXBpIiwiU2FtcGEuQjJCLlN5bmMuQXBpIl0sIm5iZiI6MTc3MTMzNTE3NiwiZXhwIjoxNzcxNDIxNTc2LCJpc3MiOiJTYW1wYS5CMkIifQ.exP-1Kx03pINH1DeDt7czZqgjh_0XrmiKOff3T0PtoE",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJDdXN0b21lcklkIjoiZGY2NzY0ZTYtNzUyZi00MmYzLWI0MmUtMjc2OTdmZmYzYTBkIiwiQ3VzdG9tZXJDb2RlIjoiMDAwMTIwMTYyOSIsIk5ld0N1c3RvbWVyQ29kZSI6IiIsIlJlbGF0ZWRQZXJzb25JZCI6IjVmY2MyZDA1LWI2YzMtNGUwZC1iNGEwLTdkOTdhMTA3OTNlNyIsIkN1c3RvbWVyTmFtZTEiOiJFVVJPQ09NUE9ORU5URVMsIExEQSIsIkN1c3RvbWVyTmFtZTIiOiIiLCJSZWxhdGVkUGVyc29uTmFtZTEiOiJWQUxERU1BUiIsIlJlbGF0ZWRQZXJzb25OYW1lMiI6IkNSQVZFSVJPIiwiQ291bnRyeUNvZGUiOiJQVCIsIkVtYWlsQWRkcmVzcyI6InZhbGRlbWFyQGV1cm9jb21wb25lbnRlcy5wdCIsIklzR3JvdXBDdXN0b21lciI6IjAiLCJTcHJhcyI6IlAiLCJMYW5ndSI6IlAiLCJMYW5ndWFnZSI6InB0LVBUIiwiYXVkIjpbIlNhbXBhLkIyQi5CYWNrb2ZmaWNlLldlYiIsIlNhbXBhLkIyQi5BY2NvdW50LkFwaSIsIlNhbXBhLkIyQi5CYXNrZXQuQXBpIiwiU2FtcGEuQjJCLkNhdGFsb2cuQXBpIiwiU2FtcGEuQjJCLkN1bHR1cmUuQXBpIiwiU2FtcGEuQjJCLk9yZGVyLkFwaSIsIlNhbXBhLkIyQi5QcmljZS5BcGkiLCJTYW1wYS5CMkIuU2VhcmNoLkFwaSIsIlNhbXBhLkIyQi5TdXJ2ZXkuQXBpIiwiU2FtcGEuQjJCLlN5bmMuQXBpIl0sIm5iZiI6MTc3MjAzNjM5MywiZXhwIjoxNzcyMTIyNzkzLCJpc3MiOiJTYW1wYS5CMkIifQ.t43QVylYWLiSdzWiKd0tpAphPU50BnEaB8XmPOiWBaY",
       "domain": "portal.iamauger.com",
       "path": "/",
-      "expires": 1771421576,
+      "expires": 1772122793,
       "httpOnly": false,
       "secure": true,
       "sameSite": "Lax"
     },
     {
       "name": "user",
-      "value": "{%22CustomerId%22:%22df6764e6-752f-42f3-b42e-27697fff3a0d%22%2C%22CustomerCode%22:%220001201629%22%2C%22NewCustomerCode%22:%22%22%2C%22RelatedPersonId%22:%225fcc2d05-b6c3-4e0d-b4a0-7d97a10793e7%22%2C%22CustomerName1%22:%22EUROCOMPONENTES%2C%20LDA%22%2C%22CustomerName2%22:%22%22%2C%22RelatedPersonName1%22:%22VALDEMAR%22%2C%22RelatedPersonName2%22:%22CRAVEIRO%22%2C%22CountryCode%22:%22PT%22%2C%22EmailAddress%22:%22valdemar@eurocomponentes.pt%22%2C%22IsGroupCustomer%22:%220%22%2C%22Spras%22:%22P%22%2C%22Langu%22:%22P%22%2C%22Language%22:%22pt-PT%22%2C%22aud%22:[%22Sampa.B2B.Backoffice.Web%22%2C%22Sampa.B2B.Account.Api%22%2C%22Sampa.B2B.Basket.Api%22%2C%22Sampa.B2B.Catalog.Api%22%2C%22Sampa.B2B.Culture.Api%22%2C%22Sampa.B2B.Order.Api%22%2C%22Sampa.B2B.Price.Api%22%2C%22Sampa.B2B.Search.Api%22%2C%22Sampa.B2B.Survey.Api%22%2C%22Sampa.B2B.Sync.Api%22]%2C%22nbf%22:1771335176%2C%22exp%22:1771421576%2C%22iss%22:%22Sampa.B2B%22}",
+      "value": "{%22CustomerId%22:%22df6764e6-752f-42f3-b42e-27697fff3a0d%22%2C%22CustomerCode%22:%220001201629%22%2C%22NewCustomerCode%22:%22%22%2C%22RelatedPersonId%22:%225fcc2d05-b6c3-4e0d-b4a0-7d97a10793e7%22%2C%22CustomerName1%22:%22EUROCOMPONENTES%2C%20LDA%22%2C%22CustomerName2%22:%22%22%2C%22RelatedPersonName1%22:%22VALDEMAR%22%2C%22RelatedPersonName2%22:%22CRAVEIRO%22%2C%22CountryCode%22:%22PT%22%2C%22EmailAddress%22:%22valdemar@eurocomponentes.pt%22%2C%22IsGroupCustomer%22:%220%22%2C%22Spras%22:%22P%22%2C%22Langu%22:%22P%22%2C%22Language%22:%22pt-PT%22%2C%22aud%22:[%22Sampa.B2B.Backoffice.Web%22%2C%22Sampa.B2B.Account.Api%22%2C%22Sampa.B2B.Basket.Api%22%2C%22Sampa.B2B.Catalog.Api%22%2C%22Sampa.B2B.Culture.Api%22%2C%22Sampa.B2B.Order.Api%22%2C%22Sampa.B2B.Price.Api%22%2C%22Sampa.B2B.Search.Api%22%2C%22Sampa.B2B.Survey.Api%22%2C%22Sampa.B2B.Sync.Api%22]%2C%22nbf%22:1772036393%2C%22exp%22:1772122793%2C%22iss%22:%22Sampa.B2B%22}",
       "domain": "portal.iamauger.com",
       "path": "/",
-      "expires": 1771421576,
+      "expires": 1772122793,
       "httpOnly": false,
       "secure": true,
       "sameSite": "Lax"
@@ -63,20 +63,20 @@
     },
     {
       "name": "cookiesession1",
-      "value": "678A3E0DA94307EBD9A6F63A6DF54538",
+      "value": "678A3E0DBCBF38C15081CDBC08131323",
       "domain": "portal.iamauger.com",
       "path": "/",
-      "expires": 1802871179.660067,
+      "expires": 1803572395.523428,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"
     },
     {
       "name": "_ga_4Q0M9KWBZT",
-      "value": "GS2.1.s1771337196$o2$g1$t1771337435$j59$l0$h0",
+      "value": "GS2.1.s1772036385$o1$g1$t1772036621$j57$l0$h0",
       "domain": ".iamauger.com",
       "path": "/",
-      "expires": 1805897435.514288,
+      "expires": 1806596621.566329,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"

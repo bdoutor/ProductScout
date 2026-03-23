@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ProductItem } from '@/types';
 
 interface ResultsTableProps {
@@ -8,15 +8,39 @@ interface ResultsTableProps {
   showOutOfStock?: boolean;
 }
 
-const MAX_ROWS_PER_SUPPLIER = 5;
+type SortColumn = 'store' | 'product' | 'code' | 'price' | 'availability';
+type SortDirection = 'asc' | 'desc';
+type AvailabilityFilter = 'all' | 'in_stock' | 'out_of_stock' | 'unknown';
+
+interface SortConfig {
+  column: SortColumn;
+  direction: SortDirection;
+}
+
+interface ColumnFilters {
+  store: string;
+  product: string;
+  code: string;
+  price: string;
+  availability: AvailabilityFilter;
+}
+
+const RESULTS_PER_PAGE = 25;
 const STOCK_LABEL_REGEX = /(stock|dispon(?:i|\u00ED)vel|available)/i;
-const OUT_OF_STOCK_REGEX = /(out\s*of\s*stock|sem\s*stock|sem\s+disponibilidade|indispon[ií]vel|esgotado)/i;
+const OUT_OF_STOCK_REGEX = /(out\s*of\s*stock|sem\s*stock|sem\s+disponibilidade|indispon(?:i|\u00ed)vel|esgotado)/i;
+
+const DEFAULT_FILTERS: ColumnFilters = {
+  store: '',
+  product: '',
+  code: '',
+  price: '',
+  availability: 'all',
+};
 
 const hasStock = (item: ProductItem): boolean => {
   const availability = typeof item.availability === 'number' ? item.availability : null;
   const label = item.availability_label ? item.availability_label.trim() : null;
 
-  // Explicit zero/negative availability wins
   if (availability !== null && availability > 0) {
     return true;
   }
@@ -40,89 +64,189 @@ const hasStock = (item: ProductItem): boolean => {
   return false;
 };
 
-const priceComparator = (a: ProductItem, b: ProductItem): number => {
-  const priceA = typeof a.price === 'number' ? a.price : Number.POSITIVE_INFINITY;
-  const priceB = typeof b.price === 'number' ? b.price : Number.POSITIVE_INFINITY;
-  if (priceA === priceB) {
-    return (a.store || '').localeCompare(b.store || '');
+const formatPrice = (price: number | null): string => {
+  if (price === null || isNaN(price)) return 'N/A';
+  return new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR' }).format(price);
+};
+
+const getAvailabilityText = (item: ProductItem): string => {
+  const availability = item.availability;
+  const label = item.availability_label ? item.availability_label.trim() : null;
+
+  if (typeof availability === 'number' && availability < 0) {
+    return 'Contacte o fornecedor';
   }
-  return priceA - priceB;
+
+  if (hasStock(item)) {
+    if (label) {
+      return label;
+    }
+    if (typeof availability === 'number' && availability > 1) {
+      return `${availability} em stock`;
+    }
+    return 'Em stock';
+  }
+
+  if ((availability === null || Number.isNaN(availability)) && !label) {
+    return 'Desconhecido';
+  }
+
+  return label || 'Sem stock';
+};
+
+const getAvailabilityBucket = (item: ProductItem): AvailabilityFilter => {
+  const availability = item.availability;
+  const label = item.availability_label ? item.availability_label.trim() : null;
+
+  if (typeof availability === 'number' && availability < 0) {
+    return 'unknown';
+  }
+  if (hasStock(item)) {
+    return 'in_stock';
+  }
+  if ((availability === null || Number.isNaN(availability)) && !label) {
+    return 'unknown';
+  }
+  return 'out_of_stock';
 };
 
 const ResultsTable: React.FC<ResultsTableProps> = ({ items, isLoading = false, showOutOfStock = false }) => {
-  const formatPrice = (price: number | null): string => {
-    if (price === null || isNaN(price)) return 'N/A';
-    return new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR' }).format(price);
-  };
+  const [currentPage, setCurrentPage] = useState(1);
+  const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
+  const [filters, setFilters] = useState<ColumnFilters>(DEFAULT_FILTERS);
 
-  const formatAvailability = (item: ProductItem): React.ReactNode => {
-    const availability = item.availability;
-    const label = item.availability_label ? item.availability_label.trim() : null;
-
-    if (typeof availability === 'number' && availability < 0) {
-      return <span className="text-gray-400">Contact store</span>;
-    }
-
-    if (hasStock(item)) {
-      const baseValue = label || (typeof availability === 'number' && availability > 1 ? `${availability}` : null);
-      const display = baseValue ? `${baseValue} in stock` : 'In stock';
-      return <span className="badge badge-success">{display}</span>;
-    }
-
-    if ((availability === null || Number.isNaN(availability)) && !label) {
-      return <span className="text-gray-400">Unknown</span>;
-    }
-
-    return <span className="badge badge-error">Out of stock</span>;
-  };
-
-  const buildDisplayItems = (): ProductItem[] => {
+  const filteredItems = useMemo((): ProductItem[] => {
     if (!Array.isArray(items) || items.length === 0) {
       return [];
     }
 
-    const grouped = new Map<string, ProductItem[]>();
+    const baseItems = showOutOfStock ? items : items.filter(hasStock);
 
-    items.forEach((item) => {
-      const key = item.store || 'Unknown';
-      if (!grouped.has(key)) {
-        grouped.set(key, []);
-      }
-      grouped.get(key)!.push(item);
+    return baseItems.filter((item) => {
+      const storeText = (item.store || '').toLowerCase();
+      const productText = (item.name || '').toLowerCase();
+      const codeText = (item.code || '').toLowerCase();
+      const priceText = `${item.price ?? ''} ${formatPrice(item.price).toLowerCase()}`;
+      const availabilityBucket = getAvailabilityBucket(item);
+
+      const storeMatch = !filters.store || storeText.includes(filters.store.toLowerCase());
+      const productMatch = !filters.product || productText.includes(filters.product.toLowerCase());
+      const codeMatch = !filters.code || codeText.includes(filters.code.toLowerCase());
+      const priceMatch = !filters.price || priceText.includes(filters.price.toLowerCase());
+      const availabilityMatch = filters.availability === 'all' || availabilityBucket === filters.availability;
+
+      return storeMatch && productMatch && codeMatch && priceMatch && availabilityMatch;
     });
+  }, [items, showOutOfStock, filters]);
 
-    const limited: ProductItem[] = [];
+  const displayItems = useMemo((): ProductItem[] => {
+    if (!sortConfig) {
+      return filteredItems;
+    }
 
-    grouped.forEach((groupItems) => {
-      const sortedGroup = [...groupItems].sort(priceComparator);
-      const stocked = sortedGroup.filter(hasStock);
-      const outOfStockItems = sortedGroup.filter((product) => !hasStock(product));
-      const ordered = [...stocked, ...outOfStockItems];
-      const bucket: ProductItem[] = [];
-
-      for (const candidate of ordered) {
-        if (!showOutOfStock && !hasStock(candidate)) {
-          continue;
-        }
-        bucket.push(candidate);
-        if (bucket.length === MAX_ROWS_PER_SUPPLIER) {
-          break;
-        }
+    const getSortValue = (item: ProductItem): string | number => {
+      switch (sortConfig.column) {
+        case 'store':
+          return item.store || '';
+        case 'product':
+          return item.name || '';
+        case 'code':
+          return item.code || '';
+        case 'price':
+          return typeof item.price === 'number' ? item.price : Number.POSITIVE_INFINITY;
+        case 'availability':
+          return getAvailabilityText(item).toLowerCase();
+        default:
+          return '';
       }
+    };
 
-      limited.push(...bucket);
+    const directionFactor = sortConfig.direction === 'asc' ? 1 : -1;
+
+    return filteredItems
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => {
+        const valueA = getSortValue(a.item);
+        const valueB = getSortValue(b.item);
+
+        let comparison = 0;
+        if (typeof valueA === 'number' && typeof valueB === 'number') {
+          comparison = valueA - valueB;
+        } else {
+          comparison = String(valueA).localeCompare(String(valueB), 'pt', { sensitivity: 'base' });
+        }
+
+        if (comparison !== 0) {
+          return comparison * directionFactor;
+        }
+
+        return a.index - b.index;
+      })
+      .map(({ item }) => item);
+  }, [filteredItems, sortConfig]);
+
+  const totalPages = Math.max(1, Math.ceil(displayItems.length / RESULTS_PER_PAGE));
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [items, showOutOfStock, sortConfig, filters]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const handleSort = (column: SortColumn) => {
+    setSortConfig((previous) => {
+      if (!previous || previous.column !== column) {
+        return { column, direction: 'asc' };
+      }
+      if (previous.direction === 'asc') {
+        return { column, direction: 'desc' };
+      }
+      return null;
     });
+  };
 
-    return limited.sort(priceComparator);
+  const setFilter = <K extends keyof ColumnFilters>(key: K, value: ColumnFilters[K]) => {
+    setFilters((previous) => ({ ...previous, [key]: value }));
+  };
+
+  const getSortIndicator = (column: SortColumn): string => {
+    if (!sortConfig || sortConfig.column !== column) {
+      return ' ';
+    }
+    return sortConfig.direction === 'asc' ? '▲' : '▼';
+  };
+
+  const formatAvailability = (item: ProductItem): React.ReactNode => {
+    const availabilityText = getAvailabilityText(item);
+    const availability = item.availability;
+    const label = item.availability_label ? item.availability_label.trim() : null;
+
+    if (typeof availability === 'number' && availability < 0) {
+      return <span className="text-gray-400">{availabilityText}</span>;
+    }
+
+    if (hasStock(item)) {
+      return <span className="badge badge-success">{availabilityText}</span>;
+    }
+
+    if ((availability === null || Number.isNaN(availability)) && !label) {
+      return <span className="text-gray-400">{availabilityText}</span>;
+    }
+
+    return <span className="badge badge-error">{availabilityText}</span>;
   };
 
   if (isLoading && (!Array.isArray(items) || items.length === 0)) {
     return (
       <div className="text-center py-12">
         <div className="animate-spin inline-block w-8 h-8 border-4 border-current border-t-transparent text-blue-600 rounded-full" role="status">
-          <span className="sr-only">Loading...</span>
+          <span className="sr-only">A carregar...</span>
         </div>
-        <p className="mt-2 text-gray-600">Searching products...</p>
+        <p className="mt-2 text-gray-600">A pesquisar produtos...</p>
       </div>
     );
   }
@@ -130,13 +254,17 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ items, isLoading = false, s
   if (!Array.isArray(items)) {
     return (
       <div className="text-center py-12 text-red-600">
-        Error: Invalid results format
+        Erro: formato de resultados inválido
       </div>
     );
   }
 
-  const displayItems = buildDisplayItems();
   const hiddenDueToStock = !showOutOfStock && items.some((item) => !hasStock(item));
+  const pageStart = (currentPage - 1) * RESULTS_PER_PAGE;
+  const pageEnd = pageStart + RESULTS_PER_PAGE;
+  const pageItems = displayItems.slice(pageStart, pageEnd);
+  const currentStart = displayItems.length > 0 ? pageStart + 1 : 0;
+  const currentEnd = Math.min(pageEnd, displayItems.length);
 
   if (displayItems.length === 0) {
     return (
@@ -145,26 +273,26 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ items, isLoading = false, s
           <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <h3 className="mt-4 text-lg font-medium text-gray-900">No products found</h3>
+          <h3 className="mt-4 text-lg font-medium text-gray-900">Nenhum produto encontrado</h3>
           <p className="mt-2 text-sm text-gray-500">
             {hiddenDueToStock
-              ? 'All current results are out of stock. Enable the "Out of stock" toggle to view them.'
-              : "We couldn't find any products matching your search."}
+              ? 'Todos os resultados actuais estão sem stock. Active "Sem stock" para os ver.'
+              : 'Não foram encontrados produtos correspondentes à pesquisa/filtro.'}
           </p>
           {!hiddenDueToStock && (
             <div className="mt-6">
               <ul className="text-sm text-gray-600 space-y-2 text-left max-w-sm mx-auto">
                 <li className="flex items-center">
                   <span className="mr-2">-</span>
-                  Check if the product code is correct
+                  Verifique se a referência está correcta
                 </li>
                 <li className="flex items-center">
                   <span className="mr-2">-</span>
-                  Try using fewer or different keywords
+                  Tente usar menos palavras-chave ou palavras diferentes
                 </li>
                 <li className="flex items-center">
                   <span className="mr-2">-</span>
-                  Remove any special characters
+                  Remova caracteres especiais
                 </li>
               </ul>
             </div>
@@ -179,27 +307,102 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ items, isLoading = false, s
       <table className="table w-full">
         <thead>
           <tr>
-            <th className="text-left">Store</th>
-            <th className="text-left">Product</th>
-            <th className="text-left">Code</th>
-            <th className="text-right">Price</th>
-            <th className="text-left">Availability</th>
-            <th className="text-left">Actions</th>
+            <th className="text-left">
+              <button type="button" className="btn btn-ghost btn-xs px-1" onClick={() => handleSort('store')}>
+                Fornecedor {getSortIndicator('store')}
+              </button>
+            </th>
+            <th className="text-left">
+              <button type="button" className="btn btn-ghost btn-xs px-1" onClick={() => handleSort('product')}>
+                Produto {getSortIndicator('product')}
+              </button>
+            </th>
+            <th className="text-left">
+              <button type="button" className="btn btn-ghost btn-xs px-1" onClick={() => handleSort('code')}>
+                Referência {getSortIndicator('code')}
+              </button>
+            </th>
+            <th className="text-right">
+              <button type="button" className="btn btn-ghost btn-xs px-1" onClick={() => handleSort('price')}>
+                Preço {getSortIndicator('price')}
+              </button>
+            </th>
+            <th className="text-left">
+              <button type="button" className="btn btn-ghost btn-xs px-1" onClick={() => handleSort('availability')}>
+                Disponibilidade {getSortIndicator('availability')}
+              </button>
+            </th>
+            <th className="text-left">Acções</th>
+          </tr>
+          <tr>
+            <th>
+              <input
+                type="text"
+                className="input input-sm w-full"
+                placeholder="Filtrar fornecedor..."
+                value={filters.store}
+                onChange={(e) => setFilter('store', e.target.value)}
+              />
+            </th>
+            <th>
+              <input
+                type="text"
+                className="input input-sm w-full"
+                placeholder="Filtrar produto..."
+                value={filters.product}
+                onChange={(e) => setFilter('product', e.target.value)}
+              />
+            </th>
+            <th>
+              <input
+                type="text"
+                className="input input-sm w-full"
+                placeholder="Filtrar referência..."
+                value={filters.code}
+                onChange={(e) => setFilter('code', e.target.value)}
+              />
+            </th>
+            <th>
+              <input
+                type="text"
+                className="input input-sm w-full text-right"
+                placeholder="Filtrar preço..."
+                value={filters.price}
+                onChange={(e) => setFilter('price', e.target.value)}
+              />
+            </th>
+            <th>
+              <select
+                className="select select-sm w-full"
+                value={filters.availability}
+                onChange={(e) => setFilter('availability', e.target.value as AvailabilityFilter)}
+              >
+                <option value="all">Todos</option>
+                <option value="in_stock">Em stock</option>
+                <option value="out_of_stock">Sem stock</option>
+                <option value="unknown">Desconhecido</option>
+              </select>
+            </th>
+            <th>
+              <button type="button" className="btn btn-xs btn-outline" onClick={() => setFilters(DEFAULT_FILTERS)}>
+                Limpar
+              </button>
+            </th>
           </tr>
         </thead>
         <tbody>
-          {displayItems.map((item, index) => (
+          {pageItems.map((item, index) => (
             <tr
-              key={`${item.store}-${item.code}-${index}`}
+              key={`${item.store}-${item.code}-${pageStart + index}`}
               className={`
                 hover:bg-gray-50
                 ${!hasStock(item) ? 'opacity-60' : ''}
                 ${!item.price ? 'opacity-75' : ''}
               `}
             >
-              <td className="font-medium">{item.store || 'Unknown'}</td>
+              <td className="font-medium">{item.store || 'Desconhecido'}</td>
               <td className="max-w-md">
-                <div className="truncate font-normal" title={item.name}>{item.name || 'Unnamed Product'}</div>
+                <div className="truncate font-normal" title={item.name}>{item.name || 'Produto sem nome'}</div>
               </td>
               <td className="text-gray-600 font-mono text-sm">{item.code || '-'}</td>
               <td className="font-semibold text-blue-600 text-right">{formatPrice(item.price)}</td>
@@ -212,22 +415,45 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ items, isLoading = false, s
                     rel="noopener noreferrer"
                     className="text-blue-600 hover:text-blue-800 hover:underline text-sm inline-flex items-center gap-1"
                   >
-                    View on site
+                    Ver no site
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                     </svg>
                   </a>
                 ) : (
-                  <span className="text-gray-400 text-sm">No link available</span>
+                  <span className="text-gray-400 text-sm">Sem link</span>
                 )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div className="mt-4 text-right text-sm text-gray-500">
-        Showing {displayItems.length} of {items.length} result{items.length !== 1 ? 's' : ''} (max {MAX_ROWS_PER_SUPPLIER} per store)
-        {!showOutOfStock ? ' - in stock only' : ''}
+      <div className="mt-4 flex items-center justify-between gap-4 text-sm text-gray-500">
+        <div>
+          A mostrar {currentStart}-{currentEnd} de {displayItems.length} resultado{displayItems.length !== 1 ? 's' : ''}
+          {!showOutOfStock ? ' — só em stock' : ''}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-sm btn-outline"
+            onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+            disabled={currentPage <= 1}
+          >
+            Anterior
+          </button>
+          <span className="min-w-24 text-center">
+            Página {currentPage} de {totalPages}
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline"
+            onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+            disabled={currentPage >= totalPages}
+          >
+            Seguinte
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -7,9 +7,13 @@ import { safeHelmet, safeRateLimit } from './utils/safe-middlewares';
 import searchRouter from './routes/search';
 import authRouter from './routes/auth';
 import supplierCredsRouter from './routes/supplier-creds';
+import adminUsersRouter from './routes/admin-users';
 import testSearchRouter from './routes/test-search';
 import mockSearchRouter from './routes/mock-search';
 import { isSupabaseConfigured, trySupabasePing } from './utils/supabase';
+import { getSessionSecret, requireAuth } from './utils/session';
+import { requireAdmin } from './middleware/requireAdmin';
+import { startSupplierAuthScheduler } from './services/supplier-auth';
 
 dotenv.config();
 
@@ -26,7 +30,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
-app.use(cookieParser(process.env.SESSION_SECRET || 'change-me-dev'));
+app.use(cookieParser(getSessionSecret()));
 
 // Basic rate limiting (per IP)
 app.use(safeRateLimit({ windowMs: 60 * 1000, max: 120 }));
@@ -47,13 +51,14 @@ app.get('/health', async (req, res) => {
 });
 
 // Routes
-app.use('/api', searchRouter);
+app.use('/api', requireAuth, searchRouter);
 if (enableMockRoutes) {
-  app.use('/api', testSearchRouter);
-  app.use('/api', mockSearchRouter);
+  app.use('/api', requireAuth, testSearchRouter);
+  app.use('/api', requireAuth, mockSearchRouter);
 }
 app.use('/auth', authRouter);
 app.use('/admin/supplier-creds', supplierCredsRouter);
+app.use('/api/admin/users', requireAuth, requireAdmin, adminUsersRouter);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -65,6 +70,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 app.listen(PORT, () => {
+  startSupplierAuthScheduler();
   console.log(`ProductScout API running on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   if (!enableMockRoutes) {

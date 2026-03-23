@@ -2,6 +2,13 @@ export interface Supplier {
   id: string;
   enabled: boolean;
   name: string;
+  /** Stable machine identifier set in Supabase (e.g. 'auger', 'gsmart').
+   *  When present, takes precedence over name-based detection everywhere in code.
+   *  Use getSupplierKey() from utils/supplier-utils to read this safely. */
+  supplier_key?: string | null;
+  /** Auth mode set in the suppliers DB table ('none' | 'auto' | 'manual').
+   *  When present, overrides the code-derived default in getSupplierAuthMode(). */
+  auth_mode?: string | null;
   base_url: string;
   mode: 'http' | 'render';
   search_url_template: string;
@@ -70,6 +77,18 @@ export interface SearchResponse {
   items: ProductItem[];
   per_supplier: SupplierResult[];
   message?: string;
+  summary?: SearchResponseSummary;
+}
+
+export interface SearchResponseSummary {
+  total_items: number;
+  available_items: number;
+  unavailable_items: number;
+  unknown_availability_items: number;
+  suppliers_total: number;
+  suppliers_success: number;
+  suppliers_error: number;
+  suppliers_pending: number;
 }
 
 export interface SupplierResult {
@@ -79,7 +98,10 @@ export interface SupplierResult {
   search_run_id?: string;
   supplier_id?: string;
   error_message?: string;
-   error_details?: string;
+  error_details?: string;
+  started_at?: string;
+  finished_at?: string;
+  elapsed_ms?: number;
 }
 
 export interface TestSupplierResponse {

@@ -7,6 +7,7 @@
     "predev": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\windows\\kill-ports.ps1 -Ports 3001",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
+    "gsmart:init-session": "ts-node --transpile-only scripts/init-gsmart-session.ts",
     "preflight:real": "ts-node --transpile-only scripts/preflight-real.ts",
     "prestart": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\windows\\kill-ports.ps1 -Ports 3001",
     "start": "node dist/index.js",
@@ -22,6 +23,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.2",
+    "bcryptjs": "^3.0.3",
     "cheerio": "^1.0.0-rc.12",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -35,6 +37,7 @@
     "playwright": "^1.56.1"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.10.5",

@@ -18,6 +18,9 @@ export interface SupplierResult {
   supplier_id?: string;
   error_message?: string;
   error_details?: string;
+  started_at?: string;
+  finished_at?: string;
+  elapsed_ms?: number;
 }
 
 export interface ProgressiveSearchStartResponse {
@@ -36,11 +39,61 @@ export interface ProgressiveSearchProgressResponse extends SearchResponse {
   last_update?: string;
 }
 
+export interface ManualSessionInitResponse {
+  ok: boolean;
+  supplier_name: string;
+  job_id?: string;
+  status?: 'queued' | 'running' | 'success' | 'error';
+  message?: string;
+  cache_key?: string;
+  cached_cookies?: number;
+  elapsed_ms?: number;
+}
+
+export interface SupplierAuthStatus {
+  supplier_id: string;
+  supplier_name: string;
+  state: 'READY' | 'CHECKING' | 'MANUAL_REQUIRED' | 'ERROR' | 'DISABLED';
+  reason_code?: string | null;
+  reason_text?: string | null;
+  manual_supported: boolean;
+  last_check_at?: string | null;
+  next_refresh_at?: string | null;
+}
+
+export interface SupplierAuthStatusResponse {
+  items: SupplierAuthStatus[];
+  updated_at?: string;
+}
+
+export interface ManualSessionJob {
+  job_id: string;
+  supplier_name: string;
+  status: 'queued' | 'running' | 'success' | 'error';
+  message?: string;
+  error?: string;
+  started_at: string;
+  updated_at: string;
+  finished_at?: string | null;
+}
+
 export interface SearchResponse {
   query: string;
   items: ProductItem[];
   per_supplier: SupplierResult[];
   message?: string;
+  summary?: SearchResponseSummary;
+}
+
+export interface SearchResponseSummary {
+  total_items: number;
+  available_items: number;
+  unavailable_items: number;
+  unknown_availability_items: number;
+  suppliers_total: number;
+  suppliers_success: number;
+  suppliers_error: number;
+  suppliers_pending: number;
 }
 
 export interface SearchRun {

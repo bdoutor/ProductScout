@@ -1,7 +1,7 @@
-$ErrorActionPreference = 'SilentlyContinue'
 param(
   [int[]]$Ports = @(3001,3000)
 )
+$ErrorActionPreference = 'SilentlyContinue'
 Write-Host "[kill-ports] Checking ports: $($Ports -join ', ')"
 foreach ($p in $Ports) {
   $lines = (netstat -ano | Select-String ":$p" | Select-String "LISTENING")

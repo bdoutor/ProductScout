@@ -39,6 +39,10 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 export const supabase: SupabaseClient | null =
   supabaseUrl && supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : null;
 
+export function getSupabaseClient(): SupabaseClient | null {
+  return supabase;
+}
+
 export function isSupabaseConfigured(): boolean {
   return Boolean(supabaseUrl && supabaseServiceKey);
 }

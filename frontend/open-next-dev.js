@@ -25,7 +25,12 @@ function nextBin() {
 async function ensureBackendIfNeeded() {
   if (process.env.SKIP_ENSURE_BACKEND === '1') return;
   await new Promise((resolve) => {
-    const child = spawn('node', ['..\\ensure-backend.js'], { shell: true, cwd: __dirname, stdio: 'inherit' });
+    const scriptPath = path.join(__dirname, '..', 'ensure-backend.js');
+    const child = spawn(process.execPath, [scriptPath], { cwd: __dirname, stdio: 'inherit' });
+    child.on('error', (err) => {
+      console.warn('[open-next-dev] Failed to run ensure-backend:', err.message);
+      resolve();
+    });
     child.on('exit', () => resolve());
   });
 }

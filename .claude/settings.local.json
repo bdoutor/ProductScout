@@ -62,7 +62,16 @@
       "Bash(git add .gitignore README.md *.bat *.js *.sql backend/src/ backend/package.json backend/package-lock.json backend/tsconfig.json backend/.env.example frontend/src/ frontend/package.json frontend/package-lock.json frontend/tsconfig.json frontend/next.config.js frontend/tailwind.config.js frontend/postcss.config.js frontend/.env.local.example)",
       "Bash(git commit -m \"Initial commit: ProductScout - Proof of Concept - Sistema funcional de comparacao de precos\")",
       "Bash(test -f .gitignore)",
-      "Bash(git add .)"
+      "Bash(git add .)",
+      "Bash(npx tsc:*)",
+      "Bash(findstr \":3001 \")",
+      "Bash(curl -s -b /tmp/ps_cookies.txt http://localhost:3001/api/suppliers/auth-status)",
+      "Bash(curl -s -b /tmp/ps_cookies.txt http://localhost:3001/api/search/supplier-status)",
+      "Bash(cd /tmp)",
+      "Bash(curl -s -c cookies3.txt -X POST http://localhost:3001/auth/login -H \"Content-Type: application/json\" -d '{\"\"user\"\":\"\"admin\"\",\"\"pass\"\":\"\"admin\"\"}')",
+      "Bash(curl -s -b cookies3.txt -X POST http://localhost:3001/api/suppliers/auth-refresh)",
+      "Bash(curl -s -b cookies3.txt http://localhost:3001/api/suppliers/auth-status)",
+      "Bash(powershell -Command \"Start-Sleep -Seconds 2; Get-NetTCPConnection -LocalPort 3000,3001 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort,OwningProcess\")"
     ],
     "deny": [],
     "ask": []
